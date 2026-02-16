@@ -1,0 +1,355 @@
+{
+  "info": {
+    "name": "TalentPlatform API",
+    "_postman_id": "8d45b39d-3f53-4f6d-b383-3f9ce9fef5b9",
+    "description": "Collection for testing TalentPlatform backend API.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth - Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"curator1\",\n  \"password\": \"12345678Aa!\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/auth/login/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "auth",
+            "login",
+            ""
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const data = pm.response.json();",
+              "if (data.access) { pm.collectionVariables.set('access_token', data.access); }",
+              "if (data.refresh) { pm.collectionVariables.set('refresh_token', data.refresh); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth - Me",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/auth/me/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "auth",
+            "me",
+            ""
+          ]
+        }
+      }
+    },
+    {
+      "name": "Auth - Refresh",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"refresh\": \"{{refresh_token}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/auth/refresh/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "auth",
+            "refresh",
+            ""
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "const data = pm.response.json();",
+              "if (data.access) { pm.collectionVariables.set('access_token', data.access); }",
+              "if (data.refresh) { pm.collectionVariables.set('refresh_token', data.refresh); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users - Download Import Template",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/auth/import-users/template/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "auth",
+            "import-users",
+            "template",
+            ""
+          ]
+        }
+      }
+    },
+    {
+      "name": "Users - Import From Excel",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "role",
+              "value": "student",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/auth/import-users/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "auth",
+            "import-users",
+            ""
+          ]
+        }
+      }
+    },
+    {
+      "name": "Projects - List Groups",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/projects/groups/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "projects",
+            "groups",
+            ""
+          ]
+        }
+      }
+    },
+    {
+      "name": "Projects - List Teams",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/projects/teams/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "projects",
+            "teams",
+            ""
+          ]
+        }
+      }
+    },
+    {
+      "name": "Projects - Create By Group",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Coursework Group Project\",\n  \"description\": \"same assignment for group\",\n  \"type\": \"coursework\",\n  \"status\": \"planned\",\n  \"supervisor_id\": 2,\n  \"group_name\": \"ИС-222б\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/projects/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "projects",
+            ""
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code >= 200 && pm.response.code < 300) {",
+              "  const data = pm.response.json();",
+              "  if (data.id) { pm.collectionVariables.set('project_id', String(data.id)); }",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Projects - Create New Team (<=20)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Creative Team Project\",\n  \"description\": \"cross-group team\",\n  \"type\": \"contest\",\n  \"status\": \"planned\",\n  \"supervisor_id\": 2,\n  \"new_team_name\": \"Vision Team\",\n  \"new_team_member_ids\": [3, 4, 5]\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/projects/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "projects",
+            ""
+          ]
+        }
+      }
+    },
+    {
+      "name": "Projects - List",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/projects/?search=&ordering=-created_at&page=1",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "projects",
+            ""
+          ],
+          "query": [
+            {
+              "key": "search",
+              "value": ""
+            },
+            {
+              "key": "ordering",
+              "value": "-created_at"
+            },
+            {
+              "key": "page",
+              "value": "1"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000/api"
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    },
+    {
+      "key": "refresh_token",
+      "value": ""
+    },
+    {
+      "key": "project_id",
+      "value": ""
+    },
+    {
+      "key": "team_id",
+      "value": ""
+    }
+  ]
+}
