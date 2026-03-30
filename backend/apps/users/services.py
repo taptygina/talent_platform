@@ -103,10 +103,10 @@ def build_credentials_pdf(accounts: list[dict], role: str) -> bytes:
 
     y = height - 40
     pdf.setFont(font_name_bold, 13)
-    pdf.drawString(40, y, "Generated credentials")
+    pdf.drawString(40, y, "Сгенерированные учетные данные")
     y -= 18
     pdf.setFont(font_name, 10)
-    pdf.drawString(40, y, f"Role: {role}")
+    pdf.drawString(40, y, f"Роль: {role}")
     y -= 24
 
     pdf.setFont(font_name, 9)
@@ -121,19 +121,19 @@ def build_credentials_pdf(accounts: list[dict], role: str) -> bytes:
         pdf.drawString(40, y, f"{index}. {account.get('last_name', '')} {account.get('first_name', '')} {account.get('middle_name', '')}".strip())
         y -= 12
         pdf.setFont(font_name, 9)
-        pdf.drawString(50, y, f"id: {account.get('id', '')}")
+        pdf.drawString(50, y, f"ID: {account.get('id', '')}")
         y -= 10
-        pdf.drawString(50, y, f"username: {account.get('username', '')}")
+        pdf.drawString(50, y, f"Логин: {account.get('username', '')}")
         y -= 10
-        pdf.drawString(50, y, f"password: {account.get('password', '')}")
+        pdf.drawString(50, y, f"Пароль: {account.get('password', '')}")
         y -= 10
-        pdf.drawString(50, y, f"email: {account.get('email', '') or '-'}")
+        pdf.drawString(50, y, f"Email: {account.get('email', '') or '-'}")
         y -= 10
-        pdf.drawString(50, y, f"phone: {account.get('phone', '') or '-'}")
+        pdf.drawString(50, y, f"Телефон: {account.get('phone', '') or '-'}")
         y -= 10
-        pdf.drawString(50, y, f"group_name: {account.get('group_name', '') or '-'}")
+        pdf.drawString(50, y, f"Группа: {account.get('group_name', '') or '-'}")
         y -= 10
-        pdf.drawString(50, y, f"role: {account.get('role', role)}")
+        pdf.drawString(50, y, f"Роль: {account.get('role', role)}")
         y -= 12
         pdf.line(40, y, width - 40, y)
         y -= 12
@@ -145,13 +145,13 @@ def build_credentials_pdf(accounts: list[dict], role: str) -> bytes:
 @transaction.atomic
 def import_users_from_xlsx(file_bytes: bytes, role: str) -> ImportResult:
     if role not in UserRole.values:
-        raise ValueError("Unsupported role")
+        raise ValueError("Неподдерживаемая роль")
 
     wb = load_workbook(filename=BytesIO(file_bytes), read_only=True, data_only=True)
     sheet = wb.active
     rows = list(sheet.iter_rows(values_only=True))
     if not rows:
-        raise ValueError("Excel file is empty")
+        raise ValueError("Excel-файл пуст")
 
     header = [str(h).strip() if h is not None else "" for h in rows[0]]
     header_map = {column: idx for idx, column in enumerate(header) if column}
@@ -172,7 +172,7 @@ def import_users_from_xlsx(file_bytes: bytes, role: str) -> ImportResult:
 
         if not first_name or not last_name:
             skipped += 1
-            errors.append(f"Row {row_index}: first_name and last_name are required")
+            errors.append(f"Строка {row_index}: first_name и last_name обязательны")
             continue
 
         base = _normalize_username(f"{last_name}.{first_name}")

@@ -50,3 +50,18 @@ class User(AbstractUser):
     @property
     def full_name(self) -> str:
         return " ".join([self.last_name, self.first_name, self.middle_name]).strip()
+
+
+class SystemSetting(models.Model):
+    platform_name = models.CharField(max_length=120, default="Инженерия проектов")
+    max_team_members = models.PositiveSmallIntegerField(default=20)
+    upcoming_deadline_days = models.PositiveSmallIntegerField(default=7)
+    allow_public_feed = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Настройка системы"
+        verbose_name_plural = "Настройки системы"
+
+    def __str__(self) -> str:
+        return self.platform_name

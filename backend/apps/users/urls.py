@@ -9,6 +9,7 @@ from apps.users.views import (
     LogoutView,
     MeView,
     RefreshView,
+    SystemSettingsView,
     UploadAvatarView,
     UserManageViewSet,
 )
@@ -22,6 +23,7 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(), name="logout"),
     path("refresh/", RefreshView.as_view(), name="refresh"),
     path("me/", MeView.as_view(), name="me"),
+    path("system-settings/", SystemSettingsView.as_view(), name="system-settings"),
     path("upload-avatar/", UploadAvatarView.as_view(), name="upload-avatar"),
     path("import-users/", ImportUsersView.as_view(), name="import-users"),
     path("import-users/template/", ImportUsersTemplateView.as_view(), name="import-users-template"),
