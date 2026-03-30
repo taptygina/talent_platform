@@ -40,6 +40,7 @@ const notificationTypeLabels = {
   supervisor_invited: 'Приглашение руководителю',
   supervisor_invite_accepted: 'Приглашение принято',
   supervisor_invite_declined: 'Приглашение отклонено',
+  project_publish_request: 'Запрос публикации проекта',
 }
 
 function fallback(value) {

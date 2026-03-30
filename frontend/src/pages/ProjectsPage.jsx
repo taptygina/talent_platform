@@ -22,6 +22,33 @@ const statusOptions = [
   { value: 'cancelled', label: 'Отменен' },
 ]
 
+const projectTypeEmoji = {
+  contest: '🏆',
+  olympiad: '🎯',
+  coursework: '📚',
+  diploma: '🎓',
+  other: '🧩',
+}
+
+const statusClassByValue = {
+  planned: 'status-chip status-planned',
+  in_progress: 'status-chip status-in-progress',
+  review: 'status-chip status-review',
+  done: 'status-chip status-done',
+  cancelled: 'status-chip status-cancelled',
+}
+
+function formatDate(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date)
+}
+
 export function ProjectsPage() {
   const [projects, setProjects] = useState([])
   const [count, setCount] = useState(0)
@@ -39,7 +66,6 @@ export function ProjectsPage() {
 
   useEffect(() => {
     let ignore = false
-
     const loadTeams = async () => {
       try {
         const { data } = await apiClient.get('/projects/teams/')
@@ -48,9 +74,7 @@ export function ProjectsPage() {
         if (!ignore) setTeams([])
       }
     }
-
     loadTeams()
-
     return () => {
       ignore = true
     }
@@ -109,143 +133,154 @@ export function ProjectsPage() {
     setSearchParams(next)
   }
 
-  const resetFilters = () => {
-    setSearchParams({ page: '1' })
+  const resetFilters = () => setSearchParams({ page: '1' })
+
+  const goToPage = (nextPage) => {
+    setSearchParams({
+      ...(search ? { search } : {}),
+      ...(status ? { status } : {}),
+      ...(type ? { type } : {}),
+      ...(team ? { team } : {}),
+      ...(startDateFrom ? { start_date_from: startDateFrom } : {}),
+      ...(startDateTo ? { start_date_to: startDateTo } : {}),
+      page: String(nextPage),
+    })
   }
 
   return (
-    <main className="page f-layout">
-      <aside className="panel soft-panel side-filter">
-        <h1>Проекты</h1>
-        <p className="muted-text">Управление проектами и расширенный поиск для куратора/преподавателя.</p>
-
-        <label>
-          Поиск (название, описание, руководитель)
-          <input placeholder="Введите запрос" value={search} onChange={(e) => updateParams({ search: e.target.value })} />
-        </label>
-
-        <label>
-          Статус
-          <select value={status} onChange={(event) => updateParams({ status: event.target.value })}>
-            {statusOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label>
-          Тип проекта
-          <select value={type} onChange={(event) => updateParams({ type: event.target.value })}>
-            {typeOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label>
-          Команда
-          <select value={team} onChange={(event) => updateParams({ team: event.target.value })}>
-            <option value="">Все команды</option>
-            {teams.map((row) => (
-              <option key={row.id} value={row.id}>
-                {row.name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label>
-          Начало проекта: с
-          <input type="date" value={startDateFrom} onChange={(event) => updateParams({ start_date_from: event.target.value })} />
-        </label>
-
-        <label>
-          Начало проекта: по
-          <input type="date" value={startDateTo} onChange={(event) => updateParams({ start_date_to: event.target.value })} />
-        </label>
-
-        <div className="toolbar-actions">
-          <button type="button" onClick={resetFilters}>
-            Сбросить фильтры
-          </button>
-          <Link className="button-link" to="/projects/new">
-            Создать проект
-          </Link>
-        </div>
-
-        <p>
-          Всего проектов: <strong>{count}</strong>
-        </p>
-      </aside>
-
-      <section className="panel">
+    <main className="page">
+      <section className="panel projects-header-panel">
         <div className="toolbar">
-          <h2>Список проектов</h2>
-          <span className="muted-text">Фильтрация по статусу, типу, команде и датам</span>
+          <div>
+            <h1>Проекты</h1>
+            <p className="muted-text">Поиск, фильтры и работа с проектами в одном экране.</p>
+          </div>
+          <div className="toolbar-actions">
+            <Link className="button-link" to="/projects/new">
+              Создать проект
+            </Link>
+          </div>
         </div>
 
-        {loading ? <p>Загрузка проектов...</p> : null}
+        <div className="projects-filter-grid" style={{ marginTop: '16px' }}>
+          <label>
+            Поиск
+            <input
+              placeholder="Название, описание, руководитель"
+              value={search}
+              onChange={(e) => updateParams({ search: e.target.value })}
+            />
+          </label>
 
-        <div className="cards-grid projects-grid">
-          {projects.map((project) => (
-            <article key={project.id} className="panel soft-panel project-card">
-              <h3>{project.title}</h3>
+          <label>
+            Статус
+            <select value={status} onChange={(event) => updateParams({ status: event.target.value })}>
+              {statusOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Тип проекта
+            <select value={type} onChange={(event) => updateParams({ type: event.target.value })}>
+              {typeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Команда
+            <select value={team} onChange={(event) => updateParams({ team: event.target.value })}>
+              <option value="">Все команды</option>
+              {teams.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Начало проекта: с
+            <input type="date" value={startDateFrom} onChange={(event) => updateParams({ start_date_from: event.target.value })} />
+          </label>
+
+          <label>
+            Начало проекта: по
+            <input type="date" value={startDateTo} onChange={(event) => updateParams({ start_date_to: event.target.value })} />
+          </label>
+        </div>
+
+        <div className="toolbar" style={{ marginTop: '16px' }}>
+          <div className="toolbar-actions">
+            <button type="button" onClick={resetFilters}>
+              Сбросить фильтры
+            </button>
+          </div>
+          <p className="muted-text">
+            Всего проектов: <strong>{count}</strong>
+          </p>
+        </div>
+      </section>
+
+      <section className="projects-cards-grid" style={{ marginTop: '24px' }}>
+        {projects.map((project) => (
+          <article key={project.id} className="panel project-tile">
+            <div className="project-tile-head">
+              <h3 className="project-tile-title">
+                <span className="project-type-emoji" aria-hidden="true">
+                  {projectTypeEmoji[project.type] || projectTypeEmoji.other}
+                </span>{' '}
+                {project.title}
+              </h3>
+              <span className={statusClassByValue[project.status] || 'status-chip'}>
+                {formatProjectStatus(project.status)}
+              </span>
+            </div>
+
+            <div className="project-meta-rows">
               <p>
-                Тип: <strong>{formatProjectType(project.type)}</strong>
+                <span className="muted-text">Тип:</span> <strong>{formatProjectType(project.type)}</strong>
               </p>
               <p>
-                Статус: <strong>{formatProjectStatus(project.status)}</strong>
+                <span className="muted-text">Команда:</span> <strong>{project.team_name || '-'}</strong>
               </p>
-              {project.academic_group_name ? <p>Учебная группа: {project.academic_group_name}</p> : null}
-              {project.team_name ? <p>Команда: {project.team_name}</p> : null}
-              <p>Публикация: {project.is_published ? 'Да' : 'Нет'}</p>
+              <p>
+                <span className="muted-text">Публикация:</span>{' '}
+                <strong>{project.is_published ? 'Опубликован' : 'Не опубликован'}</strong>
+              </p>
+              <p>
+                <span className="muted-text">Дата создания:</span> <strong>{formatDate(project.created_at)}</strong>
+              </p>
+            </div>
+
+            <div className="toolbar-actions" style={{ marginTop: '8px' }}>
               <Link className="button-link" to={`/projects/${project.id}`}>
-                Открыть
+                Подробнее
               </Link>
-            </article>
-          ))}
-        </div>
+            </div>
+          </article>
+        ))}
+      </section>
 
-        {!loading && projects.length === 0 ? <p>Проекты не найдены.</p> : null}
+      {loading ? <section className="panel" style={{ marginTop: '16px' }}>Загрузка проектов...</section> : null}
+      {!loading && projects.length === 0 ? <section className="panel" style={{ marginTop: '16px' }}>Проекты не найдены.</section> : null}
 
+      <section className="panel" style={{ marginTop: '16px' }}>
         <div className="pager">
-          <button
-            disabled={page <= 1}
-            onClick={() =>
-              setSearchParams({
-                ...(search ? { search } : {}),
-                ...(status ? { status } : {}),
-                ...(type ? { type } : {}),
-                ...(team ? { team } : {}),
-                ...(startDateFrom ? { start_date_from: startDateFrom } : {}),
-                ...(startDateTo ? { start_date_to: startDateTo } : {}),
-                page: String(page - 1),
-              })
-            }
-          >
+          <button disabled={page <= 1} onClick={() => goToPage(page - 1)}>
             Назад
           </button>
           <span>
             Страница {page} из {totalPages}
           </span>
-          <button
-            disabled={page >= totalPages}
-            onClick={() =>
-              setSearchParams({
-                ...(search ? { search } : {}),
-                ...(status ? { status } : {}),
-                ...(type ? { type } : {}),
-                ...(team ? { team } : {}),
-                ...(startDateFrom ? { start_date_from: startDateFrom } : {}),
-                ...(startDateTo ? { start_date_to: startDateTo } : {}),
-                page: String(page + 1),
-              })
-            }
-          >
+          <button disabled={page >= totalPages} onClick={() => goToPage(page + 1)}>
             Вперед
           </button>
         </div>

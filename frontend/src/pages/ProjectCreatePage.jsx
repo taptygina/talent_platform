@@ -30,11 +30,14 @@ export function ProjectCreatePage() {
 
   const [groups, setGroups] = useState([])
   const [teams, setTeams] = useState([])
+  const [templates, setTemplates] = useState([])
   const [groupStudents, setGroupStudents] = useState([])
   const [students, setStudents] = useState([])
 
   const [groupName, setGroupName] = useState('')
   const [teamId, setTeamId] = useState('')
+  const [templateId, setTemplateId] = useState('')
+  const [autoGenerateStages, setAutoGenerateStages] = useState(true)
   const [newTeamName, setNewTeamName] = useState('')
   const [groupStudentSearch, setGroupStudentSearch] = useState('')
   const [studentSearch, setStudentSearch] = useState('')
@@ -75,6 +78,31 @@ export function ProjectCreatePage() {
       ignore = true
     }
   }, [])
+
+  useEffect(() => {
+    let ignore = false
+    const loadTemplates = async () => {
+      try {
+        const { data } = await apiClient.get('/projects/templates/', {
+          params: { is_active: true, project_type: type },
+        })
+        if (!ignore) {
+          const rows = data?.results || data || []
+          setTemplates(rows)
+          setTemplateId((prev) => (rows.some((t) => String(t.id) === prev) ? prev : rows[0] ? String(rows[0].id) : ''))
+        }
+      } catch {
+        if (!ignore) {
+          setTemplates([])
+          setTemplateId('')
+        }
+      }
+    }
+    loadTemplates()
+    return () => {
+      ignore = true
+    }
+  }, [type])
 
   useEffect(() => {
     if (!groupName) {
@@ -165,6 +193,8 @@ export function ProjectCreatePage() {
       type,
       status: 'planned',
       supervisor_id: user.id,
+      template_id: templateId ? Number(templateId) : null,
+      auto_generate_stages: Boolean(templateId) && autoGenerateStages,
     }
 
     if (mode === 'group') {
@@ -243,6 +273,28 @@ export function ProjectCreatePage() {
                 </option>
               ))}
             </select>
+          </label>
+
+          <label>
+            Шаблон проекта (для автозаполнения этапов)
+            <select value={templateId} onChange={(event) => setTemplateId(event.target.value)}>
+              <option value="">Без шаблона</option>
+              {templates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={autoGenerateStages}
+              onChange={(event) => setAutoGenerateStages(event.target.checked)}
+              disabled={!templateId}
+            />
+            <span>Автоматически создать этапы из шаблона</span>
           </label>
 
           <label>

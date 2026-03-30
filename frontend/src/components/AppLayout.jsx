@@ -5,17 +5,23 @@ import { apiClient } from '../api/client'
 import { useAuth } from '../features/auth/AuthContext'
 import { formatRole } from '../utils/labels'
 
-const navItems = [
+const primaryNavItems = [
   { to: '/', label: 'Главная' },
   { to: '/projects', label: 'Проекты' },
+  { to: '/projects/new', label: 'Создать проект' },
   { to: '/teams', label: 'Команды' },
   { to: '/feed', label: 'Лента проектов' },
+  { to: '/notifications', label: 'Уведомления' },
+]
+
+const extraNavItems = [
+  { to: '/projects/templates', label: 'Шаблоны проектов' },
+  { to: '/teacher/deadlines', label: 'Календарь дедлайнов' },
   { to: '/supervisor-invites', label: 'Приглашения' },
   { to: '/portfolio', label: 'Портфолио' },
-  { to: '/projects/new', label: 'Создать проект' },
+  { to: '/methodist/reports', label: 'Отчеты методиста' },
   { to: '/users/manage', label: 'Пользователи' },
   { to: '/users/import', label: 'Импорт пользователей' },
-  { to: '/notifications', label: 'Уведомления' },
 ]
 
 export function AppLayout() {
@@ -48,15 +54,25 @@ export function AppLayout() {
   return (
     <div className="app-shell">
       <header className="header">
-        <div className="brand-box">
-          <Link to="/" className="brand-title">
-            Инженерия проектов
-          </Link>
-          <p className="brand-subtitle">Платформа управления учебными и творческими проектами</p>
+        <div className="header-top">
+          <div className="brand-box">
+            <Link to="/" className="brand-title">
+              Инженерия проектов
+            </Link>
+            <p className="brand-subtitle">Платформа управления учебными и творческими проектами</p>
+          </div>
+
+          <div className="user-box">
+            <span className="user-name">{user?.full_name || user?.username}</span>
+            <span className="user-role">{formatRole(user?.role)}</span>
+            <button type="button" onClick={logout}>
+              Выйти
+            </button>
+          </div>
         </div>
 
         <nav className="nav" aria-label="Основная навигация">
-          {navItems.map((item) => (
+          {primaryNavItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -66,15 +82,22 @@ export function AppLayout() {
               {item.to === '/notifications' ? `${item.label} (${unreadCount})` : item.label}
             </NavLink>
           ))}
+          <details className="nav-more">
+            <summary>Еще</summary>
+            <div className="nav-more-menu">
+              {extraNavItems.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === '/'}
+                  className={({ isActive }) => (isActive ? 'nav-link nav-link-active' : 'nav-link')}
+                >
+                  {item.label}
+                </NavLink>
+              ))}
+            </div>
+          </details>
         </nav>
-
-        <div className="user-box">
-          <span className="user-name">{user?.full_name || user?.username}</span>
-          <span className="user-role">{formatRole(user?.role)}</span>
-          <button type="button" onClick={logout}>
-            Выйти
-          </button>
-        </div>
       </header>
 
       <Outlet />
