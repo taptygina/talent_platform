@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.db.models import BooleanField, Count, Exists, OuterRef, Q, Value
 from django.core.files.storage import default_storage
 from django.utils.dateparse import parse_date
@@ -136,29 +138,29 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def publish(self, request, pk=None):
         project = self.get_object()
         if request.user.role not in {UserRole.CURATOR, UserRole.ADMIN}:
-            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
         if project.status != ProjectStatus.DONE:
             return Response(
-                {"detail": "Project can be published only with status 'done'."},
+                {"detail": "Проект можно публиковать только со статусом «Завершен»."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if not project.cover_image_url:
             return Response(
-                {"detail": "Project cover image is required for publishing."},
+                {"detail": "Для публикации требуется обложка проекта."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         project.is_published = True
         project.save(update_fields=["is_published", "updated_at"])
-        return Response({"detail": "Project published."})
+        return Response({"detail": "Проект опубликован."})
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
     def unpublish(self, request, pk=None):
         project = self.get_object()
         if request.user.role not in {UserRole.CURATOR, UserRole.ADMIN}:
-            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
         project.is_published = False
         project.save(update_fields=["is_published", "updated_at"])
-        return Response({"detail": "Project unpublished."})
+        return Response({"detail": "Публикация проекта снята."})
 
     @action(
         detail=False,
@@ -168,15 +170,15 @@ class ProjectViewSet(viewsets.ModelViewSet):
     )
     def upload_cover(self, request):
         if request.user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
-            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
 
         uploaded = request.FILES.get("file")
         if not uploaded:
-            return Response({"detail": "file is required"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Нужно передать файл."}, status=status.HTTP_400_BAD_REQUEST)
 
         allowed_types = {"image/jpeg", "image/png", "image/webp", "image/gif"}
         if uploaded.content_type not in allowed_types:
-            return Response({"detail": "Only image files are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Разрешены только изображения (JPG, PNG, WEBP, GIF)."}, status=status.HTTP_400_BAD_REQUEST)
 
         saved_path = default_storage.save(f"project_covers/{uploaded.name}", uploaded).replace("\\", "/")
         media_url = f"{settings.MEDIA_URL}{saved_path}"
@@ -235,6 +237,134 @@ class ProjectViewSet(viewsets.ModelViewSet):
             }
         )
 
+    @action(detail=False, methods=["get"], permission_classes=[permissions.IsAuthenticated])
+    def methodist_report(self, request):
+        if request.user.role not in {UserRole.METHODIST, UserRole.CURATOR, UserRole.ADMIN}:
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
+
+        date_from = parse_date(request.query_params.get("date_from") or "")
+        date_to = parse_date(request.query_params.get("date_to") or "")
+        teacher_search = (request.query_params.get("teacher_search") or "").strip()
+        limit = int(request.query_params.get("limit") or 20)
+        limit = max(1, min(limit, 200))
+
+        done_filter = Q(status=ProjectStatus.DONE)
+        done_supervised_filter = Q(supervised_projects__status=ProjectStatus.DONE)
+        if date_from:
+            done_filter &= Q(end_date__gte=date_from)
+            done_supervised_filter &= Q(supervised_projects__end_date__gte=date_from)
+        if date_to:
+            done_filter &= Q(end_date__lte=date_to)
+            done_supervised_filter &= Q(supervised_projects__end_date__lte=date_to)
+
+        completed_projects = Project.objects.filter(done_filter)
+        completed_total = completed_projects.count()
+
+        completed_by_type = list(
+            completed_projects.values("type").annotate(total=Count("id")).order_by("-total", "type")
+        )
+        projects_by_status = list(
+            Project.objects.values("status").annotate(total=Count("id")).order_by("-total", "status")
+        )
+
+        teacher_queryset = User.objects.filter(role=UserRole.TEACHER)
+        if teacher_search:
+            teacher_queryset = teacher_queryset.filter(
+                Q(first_name__icontains=teacher_search)
+                | Q(last_name__icontains=teacher_search)
+                | Q(username__icontains=teacher_search)
+            )
+        teacher_workload = list(
+            teacher_queryset.annotate(
+                total_projects=Count("supervised_projects", distinct=True),
+                completed_projects=Count("supervised_projects", filter=done_supervised_filter, distinct=True),
+            )
+            .values("id", "username", "first_name", "last_name", "total_projects", "completed_projects")
+            .order_by("-total_projects", "-completed_projects", "last_name", "first_name")[:limit]
+        )
+
+        student_performance = list(
+            User.objects.filter(role=UserRole.STUDENT)
+            .annotate(
+                completed_projects=Count("projects", filter=Q(projects__status=ProjectStatus.DONE), distinct=True),
+            )
+            .values("id", "username", "first_name", "last_name", "group_name", "completed_projects")
+            .order_by("-completed_projects", "last_name", "first_name")[:limit]
+        )
+
+        avg_completed_by_teacher = 0
+        if teacher_workload:
+            avg_completed_by_teacher = round(
+                sum(row["completed_projects"] for row in teacher_workload) / len(teacher_workload), 2
+            )
+
+        return Response(
+            {
+                "date_from": str(date_from) if date_from else None,
+                "date_to": str(date_to) if date_to else None,
+                "completed_total": completed_total,
+                "completed_by_type": completed_by_type,
+                "projects_by_status": projects_by_status,
+                "teacher_workload": teacher_workload,
+                "student_performance": student_performance,
+                "avg_completed_by_teacher": avg_completed_by_teacher,
+            }
+        )
+
+    @action(detail=False, methods=["get"], permission_classes=[permissions.IsAuthenticated])
+    def teacher_deadlines(self, request):
+        user = request.user
+        if user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
+
+        days = int(request.query_params.get("days") or 14)
+        days = max(1, min(days, 90))
+        date_to = timezone.localdate() + timedelta(days=days)
+
+        stages_qs = (
+            ProjectStage.objects.select_related("project")
+            .filter(deadline__isnull=False, deadline__lte=date_to, status__in=[StageStatus.OPEN, StageStatus.SUBMITTED])
+            .order_by("deadline", "project_id", "order")
+        )
+        if user.role == UserRole.TEACHER:
+            stages_qs = stages_qs.filter(project__supervisor_id=user.id)
+
+        stages = list(
+            stages_qs.values(
+                "id",
+                "title",
+                "status",
+                "deadline",
+                "order",
+                "project_id",
+                "project__title",
+                "project__status",
+            )
+        )
+        return Response({"days": days, "count": len(stages), "items": stages})
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    def request_publish(self, request, pk=None):
+        project = self.get_object()
+        user = request.user
+        if user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
+        if user.role == UserRole.TEACHER and project.supervisor_id != user.id:
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
+        if project.status != ProjectStatus.DONE:
+            return Response({"detail": "Проект должен быть в статусе «Завершен»."}, status=status.HTTP_400_BAD_REQUEST)
+
+        recipients = User.objects.filter(role__in=[UserRole.CURATOR, UserRole.ADMIN], is_active=True)
+        create_notifications(
+            recipients,
+            actor=user,
+            project=project,
+            type=NotificationType.PROJECT_PUBLISH_REQUEST,
+            title="Запрос на публикацию проекта",
+            message=f"{user.full_name or user.username} просит опубликовать проект «{project.title}».",
+        )
+        return Response({"detail": "Запрос на публикацию отправлен куратору."}, status=status.HTTP_200_OK)
+
 
 class ProjectStageViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectStageSerializer
@@ -256,8 +386,8 @@ class ProjectStageViewSet(viewsets.ModelViewSet):
                 project=project,
                 stage=stage,
                 type=NotificationType.STAGE_CREATED,
-                title="New stage created",
-                message=f"{stage.title} in project {project.title}",
+                title="Создан новый этап",
+                message=f"Этап «{stage.title}» в проекте «{project.title}».",
             )
             return
         if user.role == UserRole.TEACHER and project.supervisor_id == user.id:
@@ -268,11 +398,11 @@ class ProjectStageViewSet(viewsets.ModelViewSet):
                 project=project,
                 stage=stage,
                 type=NotificationType.STAGE_CREATED,
-                title="New stage created",
-                message=f"{stage.title} in project {project.title}",
+                title="Создан новый этап",
+                message=f"Этап «{stage.title}» в проекте «{project.title}».",
             )
             return
-        raise permissions.PermissionDenied("You cannot create stages for this project.")
+        raise permissions.PermissionDenied("Вы не можете создавать этапы в этом проекте.")
 
     def perform_update(self, serializer):
         serializer.save(updated_by=self.request.user)
@@ -292,8 +422,8 @@ class ProjectStageViewSet(viewsets.ModelViewSet):
                     project=stage.project,
                     stage=stage,
                     type=NotificationType.STAGE_REVIEWED,
-                    title="Stage reviewed",
-                    message=f"{stage.title} status: {stage.status}",
+                    title="Этап проверен",
+                    message=f"Этап «{stage.title}»: статус изменен на {stage.status}.",
                 )
             return response
         if user.role == UserRole.TEACHER and stage.project.supervisor_id == user.id:
@@ -307,21 +437,21 @@ class ProjectStageViewSet(viewsets.ModelViewSet):
                     project=stage.project,
                     stage=stage,
                     type=NotificationType.STAGE_REVIEWED,
-                    title="Stage reviewed",
-                    message=f"{stage.title} status: {stage.status}",
+                    title="Этап проверен",
+                    message=f"Этап «{stage.title}»: статус изменен на {stage.status}.",
                 )
             return response
         if user.role == UserRole.STUDENT and stage.project.participants.filter(id=user.id).exists():
             allowed_fields = {"student_report", "status"}
             if any(field not in allowed_fields for field in request.data.keys()):
                 return Response(
-                    {"detail": "Students can update only student_report and status."},
+                    {"detail": "Студент может изменять только отчет и статус этапа."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
             stage_status = request.data.get("status")
             if stage_status and stage_status not in {StageStatus.OPEN, StageStatus.SUBMITTED}:
                 return Response(
-                    {"detail": "Students can use only 'open' or 'submitted' statuses."},
+                    {"detail": "Студент может установить только статусы «Открыт» или «Сдан на проверку»."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             response = super().update(request, *args, **kwargs)
@@ -335,11 +465,11 @@ class ProjectStageViewSet(viewsets.ModelViewSet):
                     project=stage.project,
                     stage=stage,
                     type=NotificationType.STAGE_SUBMITTED,
-                    title="Stage submitted",
-                    message=f"{user.full_name or user.username} submitted {stage.title}",
+                    title="Этап отправлен на проверку",
+                    message=f"{user.full_name or user.username} отправил этап «{stage.title}».",
                 )
             return response
-        return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+        return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
 
     def destroy(self, request, *args, **kwargs):
         stage = self.get_object()
@@ -348,7 +478,7 @@ class ProjectStageViewSet(viewsets.ModelViewSet):
             return super().destroy(request, *args, **kwargs)
         if user.role == UserRole.TEACHER and stage.project.supervisor_id == user.id:
             return super().destroy(request, *args, **kwargs)
-        return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+        return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
 
 
 class ProjectCommentViewSet(
@@ -378,7 +508,7 @@ class ProjectCommentViewSet(
         comment = self.get_object()
         comment.is_approved = True
         comment.save(update_fields=["is_approved"])
-        return Response({"detail": "Comment approved."})
+        return Response({"detail": "Комментарий подтвержден."})
 
 
 class ProjectLikeViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
@@ -426,24 +556,24 @@ class TeamManageViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         user = self.request.user
         if user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
-            raise permissions.PermissionDenied("Permission denied.")
+            raise permissions.PermissionDenied("Недостаточно прав.")
         serializer.save(supervisor=user)
 
     def perform_update(self, serializer):
         user = self.request.user
         team = self.get_object()
         if user.role == UserRole.TEACHER and team.supervisor_id != user.id:
-            raise permissions.PermissionDenied("Permission denied.")
+            raise permissions.PermissionDenied("Недостаточно прав.")
         if user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
-            raise permissions.PermissionDenied("Permission denied.")
+            raise permissions.PermissionDenied("Недостаточно прав.")
         serializer.save()
 
     def perform_destroy(self, instance):
         user = self.request.user
         if user.role == UserRole.TEACHER and instance.supervisor_id != user.id:
-            raise permissions.PermissionDenied("Permission denied.")
+            raise permissions.PermissionDenied("Недостаточно прав.")
         if user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
-            raise permissions.PermissionDenied("Permission denied.")
+            raise permissions.PermissionDenied("Недостаточно прав.")
         instance.delete()
 
     @action(
@@ -454,15 +584,15 @@ class TeamManageViewSet(viewsets.ModelViewSet):
     )
     def upload_photo(self, request):
         if request.user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
-            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
 
         uploaded = request.FILES.get("file")
         if not uploaded:
-            return Response({"detail": "file is required"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Нужно передать файл."}, status=status.HTTP_400_BAD_REQUEST)
 
         allowed_types = {"image/jpeg", "image/png", "image/webp", "image/gif"}
         if uploaded.content_type not in allowed_types:
-            return Response({"detail": "Only image files are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Разрешены только изображения (JPG, PNG, WEBP, GIF)."}, status=status.HTTP_400_BAD_REQUEST)
 
         saved_path = default_storage.save(f"team_photos/{uploaded.name}", uploaded).replace("\\", "/")
         media_url = f"{settings.MEDIA_URL}{saved_path}"
@@ -502,9 +632,9 @@ class ProjectSupervisorInviteViewSet(viewsets.ModelViewSet):
     def accept(self, request, pk=None):
         invite = self.get_object()
         if request.user.id != invite.teacher_id:
-            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
         if invite.status != SupervisorInviteStatus.PENDING:
-            return Response({"detail": "Invite already processed."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Приглашение уже обработано."}, status=status.HTTP_400_BAD_REQUEST)
 
         invite.status = SupervisorInviteStatus.ACCEPTED
         invite.responded_at = timezone.now()
@@ -523,15 +653,15 @@ class ProjectSupervisorInviteViewSet(viewsets.ModelViewSet):
             message=f"{request.user.full_name or request.user.username} стал руководителем проекта {project.title}",
         )
 
-        return Response({"detail": "Invitation accepted."})
+        return Response({"detail": "Приглашение принято."})
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
     def decline(self, request, pk=None):
         invite = self.get_object()
         if request.user.id != invite.teacher_id:
-            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
         if invite.status != SupervisorInviteStatus.PENDING:
-            return Response({"detail": "Invite already processed."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Приглашение уже обработано."}, status=status.HTTP_400_BAD_REQUEST)
 
         invite.status = SupervisorInviteStatus.DECLINED
         invite.responded_at = timezone.now()
@@ -545,4 +675,4 @@ class ProjectSupervisorInviteViewSet(viewsets.ModelViewSet):
             title="Преподаватель отклонил приглашение",
             message=f"{request.user.full_name or request.user.username} отклонил приглашение в проект {invite.project.title}",
         )
-        return Response({"detail": "Invitation declined."})
+        return Response({"detail": "Приглашение отклонено."})
