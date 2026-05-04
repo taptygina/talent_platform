@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api'
+export const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -22,6 +22,7 @@ export function clearAuthTokens() {
 }
 
 apiClient.interceptors.request.use((config) => {
+  // Добавляем токен доступа ко всем авторизованным запросам.
   if (accessToken) {
     config.headers = config.headers || {}
     config.headers.Authorization = `Bearer ${accessToken}`
@@ -40,7 +41,7 @@ apiClient.interceptors.response.use(
       return Promise.reject(error)
     }
 
-    // Не пытаемся рефрешить логин/логаут/сам рефреш
+    // Не запускаем обновление токена на самих маршрутах авторизации.
     if (url.includes('/auth/login/') || url.includes('/auth/logout/') || url.includes('/auth/refresh/')) {
       return Promise.reject(error)
     }
@@ -49,6 +50,7 @@ apiClient.interceptors.response.use(
 
     try {
       if (!refreshPromise) {
+        // Один общий объект ожидания предотвращает шторм параллельных запросов обновления.
         refreshPromise = apiClient
           .post('/auth/refresh/', refreshToken ? { refresh: refreshToken } : undefined)
           .then((response) => {

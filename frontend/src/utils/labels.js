@@ -31,11 +31,15 @@ const stageStatusLabels = {
 
 const notificationTypeLabels = {
   project_created: 'Создан проект',
+  project_assigned: 'Назначен проект',
   stage_created: 'Создан этап',
+  stage_submitted: 'Этап отправлен',
+  stage_reviewed: 'Этап проверен',
   stage_updated: 'Обновлен этап',
   stage_deleted: 'Удален этап',
   stage_deadline: 'Срок этапа',
   stage_status_changed: 'Изменение статуса этапа',
+  comment_pending: 'Опубликован комментарий',
   team_invited: 'Приглашение в команду',
   supervisor_invited: 'Приглашение руководителю',
   supervisor_invite_accepted: 'Приглашение принято',

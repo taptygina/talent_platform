@@ -1,7 +1,14 @@
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import default_token_generator
 from django.core.files.storage import default_storage
+from django.core.mail import send_mail
 from django.http import HttpResponse
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+import logging
+import threading
 from rest_framework import permissions, status, viewsets
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -11,6 +18,33 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.users.models import SystemSetting, UserRole
 from apps.users.serializers import SelfProfileSerializer, SystemSettingSerializer, UserManageSerializer, UserSerializer
 from apps.users.services import build_credentials_pdf, build_import_template_xlsx, import_users_from_xlsx
+
+USERNAME_MIN_LEN = 3
+USERNAME_MAX_LEN = 5
+PASSWORD_MIN_LEN = 8
+logger = logging.getLogger(__name__)
+
+
+def _send_password_reset_email_async(*, recipient_email: str, reset_link: str) -> None:
+    def worker():
+        body = (
+            "Здравствуйте!\n\n"
+            "Вы запросили восстановление пароля на платформе \"Инженерия проектов\".\n"
+            f"Перейдите по ссылке, чтобы задать новый пароль:\n{reset_link}\n\n"
+            "Если вы не запрашивали восстановление, просто проигнорируйте это письмо."
+        )
+        try:
+            send_mail(
+                subject="Восстановление пароля",
+                message=body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[recipient_email],
+                fail_silently=False,
+            )
+        except Exception:
+            logger.exception("Failed to send password reset email to %s", recipient_email)
+
+    threading.Thread(target=worker, daemon=True).start()
 
 
 def _set_auth_cookies(response: Response, refresh: RefreshToken) -> None:
@@ -43,8 +77,12 @@ class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        username = request.data.get("username")
-        password = request.data.get("password")
+        username = (request.data.get("username") or "").strip()
+        password = request.data.get("password") or ""
+        if len(username) < USERNAME_MIN_LEN:
+            return Response({"detail": "Логин должен содержать минимум 3 символа."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(password) < PASSWORD_MIN_LEN:
+            return Response({"detail": "Пароль должен содержать минимум 8 символов."}, status=status.HTTP_400_BAD_REQUEST)
         user = authenticate(request, username=username, password=password)
         if not user:
             return Response({"detail": "Неверный логин или пароль."}, status=status.HTTP_401_UNAUTHORIZED)
@@ -107,6 +145,84 @@ class MeView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(UserSerializer(request.user).data)
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        old_password = request.data.get("old_password") or ""
+        new_password = request.data.get("new_password") or ""
+        if not old_password:
+            return Response({"detail": "Укажите текущий пароль."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(new_password) < PASSWORD_MIN_LEN:
+            return Response({"detail": "Пароль должен содержать минимум 8 символов."}, status=status.HTTP_400_BAD_REQUEST)
+        if not request.user.check_password(old_password):
+            return Response({"detail": "Текущий пароль указан неверно."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            validate_password(new_password, request.user)
+        except Exception as exc:
+            message = getattr(exc, "messages", None)
+            if isinstance(message, list) and message:
+                return Response({"detail": message[0]}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Новый пароль не соответствует требованиям безопасности."}, status=status.HTTP_400_BAD_REQUEST)
+        request.user.set_password(new_password)
+        request.user.save(update_fields=["password"])
+        return Response({"detail": "Пароль успешно изменен."}, status=status.HTTP_200_OK)
+
+
+class PasswordResetRequestView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        if not email:
+            return Response({"detail": "Укажите email."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = get_user_model().objects.filter(email__iexact=email, is_active=True).first()
+        if not user:
+            return Response({"detail": "Пользователь с такой почтой не найден."}, status=status.HTTP_404_NOT_FOUND)
+
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+        reset_link = f"{settings.FRONTEND_URL}/reset-password?uid={uid}&token={token}"
+        _send_password_reset_email_async(recipient_email=user.email, reset_link=reset_link)
+
+        return Response({"detail": "Письмо для восстановления отправлено."}, status=status.HTTP_200_OK)
+
+
+class PasswordResetConfirmView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        uid = request.data.get("uid") or ""
+        token = request.data.get("token") or ""
+        new_password = request.data.get("new_password") or ""
+        if not uid or not token:
+            return Response({"detail": "Ссылка восстановления недействительна."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(new_password) < PASSWORD_MIN_LEN:
+            return Response({"detail": "Пароль должен содержать минимум 8 символов."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user = get_user_model().objects.get(pk=user_id, is_active=True)
+        except Exception:
+            return Response({"detail": "Ссылка восстановления недействительна или устарела."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not default_token_generator.check_token(user, token):
+            return Response({"detail": "Ссылка восстановления недействительна или устарела."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            validate_password(new_password, user)
+        except Exception as exc:
+            message = getattr(exc, "messages", None)
+            if isinstance(message, list) and message:
+                return Response({"detail": message[0]}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Новый пароль не соответствует требованиям безопасности."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(new_password)
+        user.save(update_fields=["password"])
+        return Response({"detail": "Пароль успешно восстановлен."}, status=status.HTTP_200_OK)
 
 
 class SystemSettingsView(APIView):
@@ -180,7 +296,10 @@ class ImportCredentialsPdfView(APIView):
         if not isinstance(accounts, list) or not accounts:
             return Response({"detail": "Передайте непустой список accounts."}, status=status.HTTP_400_BAD_REQUEST)
 
-        content = build_credentials_pdf(accounts, role)
+        try:
+            content = build_credentials_pdf(accounts, role)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         response = HttpResponse(content, content_type="application/pdf")
         response["Content-Disposition"] = 'attachment; filename="generated-credentials.pdf"'
         return response

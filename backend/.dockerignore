@@ -1,0 +1,14 @@
+.git
+.idea
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+run_backend_stderr.log
+run_backend_stdout.log
+media
+assets
+postman

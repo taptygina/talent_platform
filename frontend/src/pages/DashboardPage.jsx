@@ -60,7 +60,7 @@ export function DashboardPage() {
       </section>
 
       <section className="dashboard-cta-grid">
-        <article className="panel soft-panel">
+        <article className="panel soft-panel dashboard-cta-card">
           <h2>Проекты</h2>
           <p>Создание, управление этапами и контроль статусов.</p>
           <Link className="button-link" to="/projects">
@@ -68,7 +68,7 @@ export function DashboardPage() {
           </Link>
         </article>
 
-        <article className="panel soft-panel">
+        <article className="panel soft-panel dashboard-cta-card">
           <h2>Портфолио и аналитика</h2>
           <p>Рейтинг студентов и преподавателей, динамика в графиках.</p>
           <Link className="button-link" to="/portfolio">
@@ -76,7 +76,7 @@ export function DashboardPage() {
           </Link>
         </article>
 
-        <article className="panel soft-panel">
+        <article className="panel soft-panel dashboard-cta-card">
           <h2>Создание проекта</h2>
           <p>Быстрый старт проекта для группы или команды.</p>
           <Link className="button-link" to="/projects/new">

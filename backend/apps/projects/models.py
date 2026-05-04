@@ -1,26 +1,33 @@
 from django.conf import settings
 from django.db import models
 
+"""Основные доменные модели проектного модуля.
+
+В этом модуле собраны сущности учебного процесса
+(проекты, этапы, сдачи) и сопутствующие сущности
+(шаблоны, комментарии, приглашения).
+"""
+
 
 class ProjectType(models.TextChoices):
-    CONTEST = "contest", "Contest"
-    OLYMPIAD = "olympiad", "Olympiad"
-    COURSEWORK = "coursework", "Coursework"
-    DIPLOMA = "diploma", "Diploma"
-    OTHER = "other", "Other"
+    CONTEST = "contest", "Конкурс"
+    OLYMPIAD = "olympiad", "Олимпиада"
+    COURSEWORK = "coursework", "Курсовой проект"
+    DIPLOMA = "diploma", "Дипломный проект"
+    OTHER = "other", "Другое"
 
 
 class ProjectStatus(models.TextChoices):
-    PLANNED = "planned", "Planned"
-    IN_PROGRESS = "in_progress", "In progress"
-    REVIEW = "review", "In review"
-    DONE = "done", "Done"
-    CANCELLED = "cancelled", "Cancelled"
+    PLANNED = "planned", "Запланирован"
+    IN_PROGRESS = "in_progress", "В работе"
+    REVIEW = "review", "На проверке"
+    DONE = "done", "Завершен"
+    CANCELLED = "cancelled", "Отменен"
 
 
 class TeamKind(models.TextChoices):
-    ACADEMIC = "academic", "Academic group"
-    CREATIVE = "creative", "Creative team"
+    ACADEMIC = "academic", "Академическая группа"
+    CREATIVE = "creative", "Команда"
 
 
 class Team(models.Model):
@@ -35,6 +42,7 @@ class Team(models.Model):
         blank=True,
         related_name="teams",
     )
+    # Отдельная промежуточная модель связи оставляет пространство для истории и метаданных участия.
     members = models.ManyToManyField(settings.AUTH_USER_MODEL, through="TeamMember", related_name="member_teams")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -73,7 +81,9 @@ class Project(models.Model):
     team = models.ForeignKey(Team, null=True, blank=True, on_delete=models.SET_NULL, related_name="projects")
     participants = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="projects", blank=True)
     is_published = models.BooleanField(default=False)
+    is_archived = models.BooleanField(default=False)
     cover_image_url = models.URLField(blank=True)
+    # Профиль форматирования из шаблона используется для стабильной генерации итогового документа.
     template = models.ForeignKey(
         "ProjectTemplate",
         null=True,
@@ -93,10 +103,10 @@ class Project(models.Model):
 
 
 class StageStatus(models.TextChoices):
-    OPEN = "open", "Open"
-    SUBMITTED = "submitted", "Submitted"
-    CHANGES_REQUESTED = "changes_requested", "Changes requested"
-    APPROVED = "approved", "Approved"
+    OPEN = "open", "Открыт"
+    SUBMITTED = "submitted", "Сдан на проверку"
+    CHANGES_REQUESTED = "changes_requested", "Нужны доработки"
+    APPROVED = "approved", "Принят"
 
 
 class ProjectStage(models.Model):
@@ -138,6 +148,7 @@ class ProjectTemplate(models.Model):
     project_type = models.CharField(max_length=20, choices=ProjectType.choices, default=ProjectType.OTHER)
     description = models.TextField(blank=True)
     template_file = models.FileField(upload_to="project_templates/", null=True, blank=True)
+    format_profile = models.JSONField(default=dict, blank=True)
     is_active = models.BooleanField(default=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -191,10 +202,10 @@ class StageMaterial(models.Model):
 
 
 class StageSubmissionStatus(models.TextChoices):
-    DRAFT = "draft", "Draft"
-    SUBMITTED = "submitted", "Submitted"
-    NEEDS_CHANGES = "needs_changes", "Needs changes"
-    APPROVED = "approved", "Approved"
+    DRAFT = "draft", "Черновик"
+    SUBMITTED = "submitted", "На проверке"
+    NEEDS_CHANGES = "needs_changes", "Нужны доработки"
+    APPROVED = "approved", "Принято"
 
 
 class ProjectStageSubmission(models.Model):
@@ -227,8 +238,8 @@ class ProjectStageSubmissionFile(models.Model):
 
 
 class StageReviewDecision(models.TextChoices):
-    NEEDS_CHANGES = "needs_changes", "Needs changes"
-    APPROVED = "approved", "Approved"
+    NEEDS_CHANGES = "needs_changes", "Нужны доработки"
+    APPROVED = "approved", "Принято"
 
 
 class ProjectStageReview(models.Model):
@@ -239,6 +250,7 @@ class ProjectStageReview(models.Model):
         related_name="stage_reviews",
     )
     decision = models.CharField(max_length=20, choices=StageReviewDecision.choices)
+    score = models.PositiveIntegerField(null=True, blank=True)
     comment = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -286,9 +298,17 @@ class StageDeadlineChangeLog(models.Model):
 
 class ProjectComment(models.Model):
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="comments")
+    # Поле этапа опционально: общий комментарий по проекту хранится без привязки к этапу.
+    stage = models.ForeignKey(
+        ProjectStage,
+        on_delete=models.CASCADE,
+        related_name="comments",
+        null=True,
+        blank=True,
+    )
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="project_comments")
     text = models.TextField()
-    is_approved = models.BooleanField(default=False)
+    is_approved = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -307,9 +327,9 @@ class ProjectLike(models.Model):
 
 
 class SupervisorInviteStatus(models.TextChoices):
-    PENDING = "pending", "Pending"
-    ACCEPTED = "accepted", "Accepted"
-    DECLINED = "declined", "Declined"
+    PENDING = "pending", "Ожидает ответа"
+    ACCEPTED = "accepted", "Принято"
+    DECLINED = "declined", "Отклонено"
 
 
 class ProjectSupervisorInvite(models.Model):

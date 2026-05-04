@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 
 import { apiClient, clearAuthTokens, setAuthTokens } from '../../api/client'
@@ -19,7 +20,7 @@ export function AuthProvider({ children }) {
             refresh: refreshResponse.data?.refresh,
           })
         } catch {
-          // Если рефреш не удался, просто попробуем me (могут сработать cookies текущей сессии)
+          // Если обновить токен не удалось, пробуем получить профиль по текущей сессии.
         }
 
         const { data } = await apiClient.get('/auth/me/')

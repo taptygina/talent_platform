@@ -2,12 +2,15 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from apps.users.views import (
+    ChangePasswordView,
     ImportCredentialsPdfView,
     ImportUsersTemplateView,
     ImportUsersView,
     LoginView,
     LogoutView,
     MeView,
+    PasswordResetConfirmView,
+    PasswordResetRequestView,
     RefreshView,
     SystemSettingsView,
     UploadAvatarView,
@@ -23,6 +26,9 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(), name="logout"),
     path("refresh/", RefreshView.as_view(), name="refresh"),
     path("me/", MeView.as_view(), name="me"),
+    path("change-password/", ChangePasswordView.as_view(), name="change-password"),
+    path("password-reset/", PasswordResetRequestView.as_view(), name="password-reset"),
+    path("password-reset/confirm/", PasswordResetConfirmView.as_view(), name="password-reset-confirm"),
     path("system-settings/", SystemSettingsView.as_view(), name="system-settings"),
     path("upload-avatar/", UploadAvatarView.as_view(), name="upload-avatar"),
     path("import-users/", ImportUsersView.as_view(), name="import-users"),

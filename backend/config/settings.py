@@ -8,6 +8,14 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_csv(name: str, default: str = "") -> list[str]:
+    return [item.strip().lower() for item in os.getenv(name, default).split(",") if item.strip()]
+
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-dev-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() == "true"
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",") if h.strip()]
@@ -121,6 +129,28 @@ SIMPLE_JWT = {
     "ALGORITHM": "HS256",
     "SIGNING_KEY": SECRET_KEY,
 }
+
+EMAIL_NOTIFICATIONS_ENABLED = _env_bool("EMAIL_NOTIFICATIONS_ENABLED", True)
+EMAIL_NOTIFICATIONS_SKIP_DOMAINS = _env_csv(
+    "EMAIL_NOTIFICATIONS_SKIP_DOMAINS",
+    "example.com,example.local,test.local",
+)
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+
+EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = os.getenv("SMTP_HOST", "smtp.mail.ru")
+EMAIL_PORT = int(os.getenv("SMTP_PORT", "465"))
+EMAIL_HOST_USER = os.getenv("SMTP_USERNAME", "")
+EMAIL_HOST_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+_email_use_ssl = _env_bool("SMTP_USE_SSL", True)
+_email_use_tls = _env_bool("SMTP_USE_TLS", False)
+EMAIL_USE_SSL = _email_use_ssl
+EMAIL_USE_TLS = _email_use_tls and not _email_use_ssl
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "noreply@localhost")
+SERVER_EMAIL = DEFAULT_FROM_EMAIL
+EMAIL_TIMEOUT = int(os.getenv("SMTP_TIMEOUT_SECONDS", "10"))
+
+PASSWORD_RESET_TIMEOUT = int(os.getenv("PASSWORD_RESET_TIMEOUT_SECONDS", str(60 * 30)))
 
 LOGGING = {
     "version": 1,

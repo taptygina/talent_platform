@@ -21,27 +21,72 @@ REQUIRED_COLUMNS = {"first_name", "last_name"}
 OPTIONAL_COLUMNS = {"middle_name", "email", "phone", "group_name"}
 ALL_COLUMNS = REQUIRED_COLUMNS | OPTIONAL_COLUMNS
 TEMPLATE_COLUMNS = ("first_name", "last_name", "middle_name", "email", "phone", "group_name")
+USERNAME_MIN_LEN = 3
+USERNAME_MAX_LEN = 5
+PASSWORD_MIN_LEN = 8
 
 
-def _resolve_pdf_font_name() -> str:
+def _normalize_text_key(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip()).casefold()
+
+
+def _normalize_email_key(value: str) -> str:
+    return (value or "").strip().casefold()
+
+
+def _normalize_phone_key(value: str) -> str:
+    return re.sub(r"[^\d+]+", "", (value or "").strip())
+
+
+def _person_dedupe_key(
+    *,
+    role: str,
+    first_name: str,
+    last_name: str,
+    middle_name: str,
+    group_name: str,
+) -> tuple[str, str, str, str, str]:
+    return (
+        role,
+        _normalize_text_key(last_name),
+        _normalize_text_key(first_name),
+        _normalize_text_key(middle_name),
+        _normalize_text_key(group_name) if role == UserRole.STUDENT else "",
+    )
+
+
+def _resolve_pdf_font_names() -> tuple[str, str]:
     """
     Register a Unicode font for Cyrillic rendering.
-    Falls back to Helvetica if nothing found.
     """
     candidates = [
+        ("DejaVuSans", Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"), "DejaVuSansBold", Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
+        ("DejaVuSans", Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")),
+        ("LiberationSans", Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf")),
+        ("NotoSans", Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf")),
         ("DejaVuSans", Path("C:/Windows/Fonts/DejaVuSans.ttf")),
         ("Arial", Path("C:/Windows/Fonts/arial.ttf")),
         ("Tahoma", Path("C:/Windows/Fonts/tahoma.ttf")),
     ]
-    for font_name, font_path in candidates:
+    for item in candidates:
         try:
-            if font_path.exists():
-                if font_name not in pdfmetrics.getRegisteredFontNames():
-                    pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
-                return font_name
+            if len(item) == 4:
+                font_name, font_path, bold_name, bold_path = item
+                if font_path.exists() and bold_path.exists():
+                    if font_name not in pdfmetrics.getRegisteredFontNames():
+                        pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
+                    if bold_name not in pdfmetrics.getRegisteredFontNames():
+                        pdfmetrics.registerFont(TTFont(bold_name, str(bold_path)))
+                    return font_name, bold_name
+            else:
+                font_name, font_path = item
+                if font_path.exists():
+                    if font_name not in pdfmetrics.getRegisteredFontNames():
+                        pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
+                    return font_name, font_name
         except Exception:
             continue
-    return "Helvetica"
+    raise ValueError("Не найден шрифт с поддержкой кириллицы для генерации PDF.")
 
 
 @dataclass
@@ -58,16 +103,33 @@ def _normalize_username(value: str) -> str:
     return value or "user"
 
 
+def _username_seed(value: str) -> str:
+    raw = re.sub(r"[^a-z0-9]+", "", _normalize_username(value))
+    if len(raw) < USERNAME_MIN_LEN:
+        raw = f"{raw}{secrets.token_hex(2)}"
+    return raw[:USERNAME_MAX_LEN]
+
+
 def _unique_username(base: str) -> str:
-    username = base
-    index = 1
-    while User.objects.filter(username=username).exists():
-        username = f"{base}{index}"
-        index += 1
-    return username
+    seed = _username_seed(base)
+    if not User.objects.filter(username=seed).exists():
+        return seed
+
+    attempts = 0
+    while attempts < 500:
+        tail_len = max(1, USERNAME_MAX_LEN - USERNAME_MIN_LEN)
+        suffix = "".join(secrets.choice(string.digits) for _ in range(tail_len))
+        candidate = f"{seed[:USERNAME_MIN_LEN]}{suffix}"[:USERNAME_MAX_LEN]
+        if USERNAME_MIN_LEN <= len(candidate) <= USERNAME_MAX_LEN and not User.objects.filter(username=candidate).exists():
+            return candidate
+        attempts += 1
+
+    raise ValueError("Не удалось сгенерировать уникальный логин длиной 3-5 символов.")
 
 
 def _generate_password(length: int = 10) -> str:
+    if length < PASSWORD_MIN_LEN:
+        raise ValueError(f"Пароль должен содержать минимум {PASSWORD_MIN_LEN} символов.")
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
@@ -98,8 +160,7 @@ def build_credentials_pdf(accounts: list[dict], role: str) -> bytes:
     output = BytesIO()
     pdf = canvas.Canvas(output, pagesize=A4)
     width, height = A4
-    font_name = _resolve_pdf_font_name()
-    font_name_bold = "Helvetica-Bold" if font_name == "Helvetica" else font_name
+    font_name, font_name_bold = _resolve_pdf_font_names()
 
     y = height - 40
     pdf.setFont(font_name_bold, 13)
@@ -164,20 +225,80 @@ def import_users_from_xlsx(file_bytes: bytes, role: str) -> ImportResult:
     skipped = 0
     errors: list[str] = []
     generated_accounts: list[dict] = []
+    seen_person_keys: set[tuple[str, str, str, str, str]] = set()
+
+    existing_person_keys = {
+        _person_dedupe_key(
+            role=user.role,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            middle_name=user.middle_name,
+            group_name=user.group_name,
+        )
+        for user in User.objects.filter(role=role).only("role", "first_name", "last_name", "middle_name", "group_name")
+    }
+    existing_email_keys = {
+        _normalize_email_key(user.email)
+        for user in User.objects.exclude(email="")
+        .only("email")
+        if _normalize_email_key(user.email)
+    }
+    existing_phone_keys = {
+        _normalize_phone_key(user.phone)
+        for user in User.objects.exclude(phone="")
+        .only("phone")
+        if _normalize_phone_key(user.phone)
+    }
 
     for row_index, values in enumerate(rows[1:], start=2):
         row_data = {name: values[idx] for name, idx in header_map.items() if idx < len(values)}
         first_name = _cell_text(row_data, "first_name")
         last_name = _cell_text(row_data, "last_name")
+        middle_name = _cell_text(row_data, "middle_name")
+        email = _cell_text(row_data, "email")
+        phone = _cell_text(row_data, "phone")
+        group_name = _cell_text(row_data, "group_name")
 
         if not first_name or not last_name:
             skipped += 1
             errors.append(f"Строка {row_index}: first_name и last_name обязательны")
             continue
 
+        person_key = _person_dedupe_key(
+            role=role,
+            first_name=first_name,
+            last_name=last_name,
+            middle_name=middle_name,
+            group_name=group_name,
+        )
+        email_key = _normalize_email_key(email)
+        phone_key = _normalize_phone_key(phone)
+
+        if person_key in seen_person_keys:
+            skipped += 1
+            errors.append(f"Строка {row_index}: дублируется в загруженном файле (ФИО/группа).")
+            continue
+        if person_key in existing_person_keys:
+            skipped += 1
+            errors.append(f"Строка {row_index}: пользователь уже существует (ФИО/группа).")
+            continue
+        if email_key and email_key in existing_email_keys:
+            skipped += 1
+            errors.append(f"Строка {row_index}: пользователь с таким email уже существует.")
+            continue
+        if phone_key and phone_key in existing_phone_keys:
+            skipped += 1
+            errors.append(f"Строка {row_index}: пользователь с таким телефоном уже существует.")
+            continue
+
         base = _normalize_username(f"{last_name}.{first_name}")
-        username = _unique_username(base)
-        password = _generate_password()
+        try:
+            username = _unique_username(base)
+            password = _generate_password()
+        except ValueError as exc:
+            skipped += 1
+            errors.append(f"Строка {row_index}: {exc}")
+            continue
 
         user_data = {
             "username": username,
@@ -185,13 +306,19 @@ def import_users_from_xlsx(file_bytes: bytes, role: str) -> ImportResult:
             "role": role,
             "first_name": first_name,
             "last_name": last_name,
-            "middle_name": _cell_text(row_data, "middle_name"),
-            "email": _cell_text(row_data, "email"),
-            "phone": _cell_text(row_data, "phone"),
-            "group_name": _cell_text(row_data, "group_name"),
+            "middle_name": middle_name,
+            "email": email,
+            "phone": phone,
+            "group_name": group_name,
         }
         user = User.objects.create_user(**user_data)
         created += 1
+        seen_person_keys.add(person_key)
+        existing_person_keys.add(person_key)
+        if email_key:
+            existing_email_keys.add(email_key)
+        if phone_key:
+            existing_phone_keys.add(phone_key)
         generated_accounts.append(
             {
                 "id": user.id,

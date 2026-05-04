@@ -3,6 +3,10 @@ from rest_framework import serializers
 
 from apps.users.models import SystemSetting, User
 
+USERNAME_MIN_LEN = 3
+USERNAME_MAX_LEN = 5
+PASSWORD_MIN_LEN = 8
+
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
@@ -50,9 +54,17 @@ class UserManageSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("date_joined", "last_login")
 
+    def validate_username(self, value):
+        length = len((value or "").strip())
+        if length < USERNAME_MIN_LEN or length > USERNAME_MAX_LEN:
+            raise serializers.ValidationError("Логин должен содержать от 3 до 5 символов.")
+        return value
+
     def validate_new_password(self, value):
         if not value:
             return value
+        if len(value) < PASSWORD_MIN_LEN:
+            raise serializers.ValidationError("Пароль должен содержать минимум 8 символов.")
         validate_password(value)
         return value
 
@@ -88,9 +100,17 @@ class SelfProfileSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("role",)
 
+    def validate_username(self, value):
+        length = len((value or "").strip())
+        if length < USERNAME_MIN_LEN or length > USERNAME_MAX_LEN:
+            raise serializers.ValidationError("Логин должен содержать от 3 до 5 символов.")
+        return value
+
     def validate_new_password(self, value):
         if not value:
             return value
+        if len(value) < PASSWORD_MIN_LEN:
+            raise serializers.ValidationError("Пароль должен содержать минимум 8 символов.")
         validate_password(value)
         return value
 

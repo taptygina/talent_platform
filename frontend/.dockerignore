@@ -1,0 +1,10 @@
+.git
+node_modules
+dist
+.idea
+run_frontend_stderr.log
+run_frontend_stdout.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

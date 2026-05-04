@@ -16,7 +16,6 @@ const typeOptions = [
 const modeOptions = [
   { value: 'group', label: 'По академической группе' },
   { value: 'team', label: 'По существующей команде' },
-  { value: 'new_team', label: 'Создать новую команду' },
 ]
 
 export function ProjectCreatePage() {
@@ -31,44 +30,44 @@ export function ProjectCreatePage() {
   const [groups, setGroups] = useState([])
   const [teams, setTeams] = useState([])
   const [templates, setTemplates] = useState([])
-  const [groupStudents, setGroupStudents] = useState([])
-  const [students, setStudents] = useState([])
 
   const [groupName, setGroupName] = useState('')
+  const [groupSearch, setGroupSearch] = useState('')
+  const [groupStudentSearch, setGroupStudentSearch] = useState('')
+  const [groupStudents, setGroupStudents] = useState([])
+  const [selectedGroupStudentIds, setSelectedGroupStudentIds] = useState([])
+  const [isGroupsLoading, setIsGroupsLoading] = useState(false)
+  const [isGroupStudentsLoading, setIsGroupStudentsLoading] = useState(false)
   const [teamId, setTeamId] = useState('')
+  const [teamSearch, setTeamSearch] = useState('')
   const [templateId, setTemplateId] = useState('')
   const [autoGenerateStages, setAutoGenerateStages] = useState(true)
-  const [newTeamName, setNewTeamName] = useState('')
-  const [groupStudentSearch, setGroupStudentSearch] = useState('')
-  const [studentSearch, setStudentSearch] = useState('')
-  const [groupStudentIds, setGroupStudentIds] = useState([])
-  const [newTeamMemberIds, setNewTeamMemberIds] = useState([])
 
   const [isLoading, setIsLoading] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
 
   const canCreate = useMemo(() => ['teacher', 'curator', 'admin'].includes(user?.role), [user?.role])
+  const filteredGroups = useMemo(() => groups, [groups])
+  const filteredTeams = useMemo(() => {
+    const q = teamSearch.trim().toLowerCase()
+    if (!q) return teams
+    return teams.filter((team) => team.name.toLowerCase().includes(q))
+  }, [teamSearch, teams])
 
   useEffect(() => {
     let ignore = false
     const load = async () => {
       setIsLoading(true)
       try {
-        const [groupsResponse, teamsResponse] = await Promise.all([
-          apiClient.get('/projects/groups/'),
-          apiClient.get('/projects/teams/'),
-        ])
+        const teamsResponse = await apiClient.get('/projects/teams/')
         if (!ignore) {
-          const nextGroups = groupsResponse.data || []
           const nextTeams = teamsResponse.data || []
-          setGroups(nextGroups)
           setTeams(nextTeams)
-          if (nextGroups.length) setGroupName(nextGroups[0].group_name)
           if (nextTeams.length) setTeamId(String(nextTeams[0].id))
         }
       } catch {
-        if (!ignore) setError('Не удалось загрузить группы и команды.')
+        if (!ignore) setError('Не удалось загрузить команды.')
       } finally {
         if (!ignore) setIsLoading(false)
       }
@@ -89,7 +88,7 @@ export function ProjectCreatePage() {
         if (!ignore) {
           const rows = data?.results || data || []
           setTemplates(rows)
-          setTemplateId((prev) => (rows.some((t) => String(t.id) === prev) ? prev : rows[0] ? String(rows[0].id) : ''))
+          setTemplateId((prev) => (rows.some((t) => String(t.id) === prev) ? prev : ''))
         }
       } catch {
         if (!ignore) {
@@ -105,80 +104,80 @@ export function ProjectCreatePage() {
   }, [type])
 
   useEffect(() => {
-    if (!groupName) {
-      setGroupStudents([])
-      setGroupStudentIds([])
+    if (mode !== 'group') return
+    const q = groupSearch.trim()
+    if (q.length < 2) {
+      setGroups([])
+      setGroupName('')
+      setIsGroupsLoading(false)
       return
     }
     let ignore = false
-    const loadGroupStudents = async () => {
+    const timerId = setTimeout(async () => {
+      setIsGroupsLoading(true)
       try {
-        const { data } = await apiClient.get('/projects/students/', {
-          params: { group_name: groupName, search: groupStudentSearch },
-        })
+        const { data } = await apiClient.get('/projects/groups/', { params: { search: q } })
         if (!ignore) {
           const rows = data || []
-          setGroupStudents(rows)
-          setGroupStudentIds((prev) => {
-            const validIds = new Set(rows.map((row) => row.id))
-            const kept = prev.filter((id) => validIds.has(id))
-            if (groupStudentSearch) return kept
-            return kept.length ? kept : rows.map((row) => row.id)
-          })
+          setGroups(rows)
+          if (!rows.some((row) => row.group_name === groupName)) {
+            setGroupName('')
+            setSelectedGroupStudentIds([])
+            setGroupStudents([])
+            setGroupStudentSearch('')
+          }
         }
       } catch {
         if (!ignore) {
-          setGroupStudents([])
-          setGroupStudentIds([])
+          setGroups([])
+          setGroupName('')
         }
+      } finally {
+        if (!ignore) setIsGroupsLoading(false)
       }
-    }
-    loadGroupStudents()
+    }, 300)
     return () => {
       ignore = true
+      clearTimeout(timerId)
     }
-  }, [groupName, groupStudentSearch])
+  }, [mode, groupSearch, groupName])
 
   useEffect(() => {
-    if (mode !== 'new_team') return
+    if (mode !== 'group' || !groupName) {
+      setGroupStudents([])
+      setIsGroupStudentsLoading(false)
+      return
+    }
+    const q = groupStudentSearch.trim()
+    if (q.length < 2) {
+      setGroupStudents([])
+      setIsGroupStudentsLoading(false)
+      return
+    }
     let ignore = false
-    const loadStudents = async () => {
+    const timerId = setTimeout(async () => {
+      setIsGroupStudentsLoading(true)
       try {
         const { data } = await apiClient.get('/projects/students/', {
-          params: { search: studentSearch },
+          params: { group_name: groupName, search: q },
         })
-        if (!ignore) setStudents(data || [])
+        if (!ignore) setGroupStudents(data || [])
       } catch {
-        if (!ignore) setStudents([])
+        if (!ignore) setGroupStudents([])
+      } finally {
+        if (!ignore) setIsGroupStudentsLoading(false)
       }
-    }
-    loadStudents()
+    }, 300)
     return () => {
       ignore = true
+      clearTimeout(timerId)
     }
-  }, [mode, studentSearch])
+  }, [mode, groupName, groupStudentSearch])
 
   const toggleGroupStudent = (studentId) => {
-    setGroupStudentIds((prev) =>
-      prev.includes(studentId) ? prev.filter((id) => id !== studentId) : [...prev, studentId],
-    )
-  }
-
-  const selectAllFilteredGroupStudents = () => {
-    const filteredIds = groupStudents.map((student) => student.id)
-    setGroupStudentIds((prev) => Array.from(new Set([...prev, ...filteredIds])))
-  }
-
-  const clearAllFilteredGroupStudents = () => {
-    const filteredIds = new Set(groupStudents.map((student) => student.id))
-    setGroupStudentIds((prev) => prev.filter((id) => !filteredIds.has(id)))
-  }
-
-  const toggleNewTeamMember = (memberId) => {
-    setNewTeamMemberIds((prev) => {
-      if (prev.includes(memberId)) return prev.filter((id) => id !== memberId)
-      if (prev.length >= 20) return prev
-      return [...prev, memberId]
+    setSelectedGroupStudentIds((prev) => {
+      if (prev.includes(studentId)) return prev.filter((id) => id !== studentId)
+      return [...prev, studentId]
     })
   }
 
@@ -186,6 +185,22 @@ export function ProjectCreatePage() {
     event.preventDefault()
     setError('')
     setIsSubmitting(true)
+
+    if (mode === 'group' && !groupName) {
+      setError('Выберите академическую группу.')
+      setIsSubmitting(false)
+      return
+    }
+    if (mode === 'group' && selectedGroupStudentIds.length === 0) {
+      setError('Выберите минимум одного участника из группы.')
+      setIsSubmitting(false)
+      return
+    }
+    if (mode === 'team' && !teamId) {
+      setError('Выберите команду.')
+      setIsSubmitting(false)
+      return
+    }
 
     const payload = {
       title,
@@ -199,13 +214,9 @@ export function ProjectCreatePage() {
 
     if (mode === 'group') {
       payload.group_name = groupName
-      payload.group_student_ids = groupStudentIds
+      payload.group_student_ids = selectedGroupStudentIds
     }
     if (mode === 'team') payload.team_id = Number(teamId)
-    if (mode === 'new_team') {
-      payload.new_team_name = newTeamName
-      payload.new_team_member_ids = newTeamMemberIds
-    }
 
     try {
       if (coverImageFile) {
@@ -243,7 +254,7 @@ export function ProjectCreatePage() {
       <section className="panel centered-panel">
         <h1>Создание проекта</h1>
         <p className="muted-text">Последовательно заполните поля и выберите способ назначения участников.</p>
-        {isLoading ? <p>Загрузка групп и команд...</p> : null}
+        {isLoading ? <p>Загрузка команд...</p> : null}
 
         <form className="project-form" onSubmit={onSubmit}>
           <label>
@@ -287,15 +298,16 @@ export function ProjectCreatePage() {
             </select>
           </label>
 
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={autoGenerateStages}
-              onChange={(event) => setAutoGenerateStages(event.target.checked)}
-              disabled={!templateId}
-            />
-            <span>Автоматически создать этапы из шаблона</span>
-          </label>
+          {templateId ? (
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={autoGenerateStages}
+                onChange={(event) => setAutoGenerateStages(event.target.checked)}
+              />
+              <span>Автоматически создать этапы из шаблона</span>
+            </label>
+          ) : null}
 
           <label>
             Режим назначения участников
@@ -311,110 +323,144 @@ export function ProjectCreatePage() {
           {mode === 'group' ? (
             <>
               <label>
-                Академическая группа
-                <select value={groupName} onChange={(event) => setGroupName(event.target.value)} required>
-                  {groups.map((group) => (
-                    <option key={group.group_name} value={group.group_name}>
-                      {group.group_name} ({group.students_count})
-                    </option>
-                  ))}
-                </select>
+                Поиск академической группы
+                <input
+                  value={groupSearch}
+                  onChange={(event) => {
+                    setGroupSearch(event.target.value)
+                    setError('')
+                  }}
+                  placeholder="Например: ИС-22"
+                />
               </label>
+              {groupSearch.trim().length > 0 && groupSearch.trim().length < 2 ? (
+                <p className="muted-text">Введите минимум 2 символа для поиска группы.</p>
+              ) : null}
+              {isGroupsLoading ? <p className="muted-text">Поиск групп...</p> : null}
 
               <label>
-                Поиск студента внутри группы
+                Академическая группа
+                {groupSearch.trim().length >= 2 && !isGroupsLoading ? (
+                  filteredGroups.length ? (
+                    <ul className="list selection-list">
+                      {filteredGroups.map((group) => {
+                        const checked = groupName === group.group_name
+                        return (
+                          <li key={group.group_name} className="list-item">
+                            <label className="checkbox-row">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(event) => {
+                                  if (event.target.checked) {
+                                    setGroupName(group.group_name)
+                                    setGroupStudentSearch('')
+                                    setGroupStudents([])
+                                    setSelectedGroupStudentIds([])
+                                  } else {
+                                    setGroupName('')
+                                    setGroupStudentSearch('')
+                                    setGroupStudents([])
+                                    setSelectedGroupStudentIds([])
+                                  }
+                                }}
+                              />
+                              <span>
+                                {group.group_name} ({group.students_count})
+                              </span>
+                            </label>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="muted-text">Группы по запросу не найдены.</p>
+                  )
+                ) : (
+                  <p className="muted-text">Введите запрос для поиска академической группы.</p>
+                )}
+              </label>
+              <label>
+                Поиск участника в выбранной группе
                 <input
                   value={groupStudentSearch}
                   onChange={(event) => setGroupStudentSearch(event.target.value)}
-                  placeholder="ФИО или логин"
+                  placeholder="Введите ФИО или логин (минимум 2 символа)"
+                  disabled={!groupName}
                 />
               </label>
-
-              <div className="toolbar-actions">
-                <button type="button" onClick={selectAllFilteredGroupStudents}>
-                  Выбрать всех
-                </button>
-                <button type="button" onClick={clearAllFilteredGroupStudents}>
-                  Очистить выбор
-                </button>
-              </div>
-
-              <p>
-                Выбрано студентов: <strong>{groupStudentIds.length}</strong>
-              </p>
-
-              <ul className="list selection-list">
-                {groupStudents.map((student) => (
-                  <li key={student.id} className="list-item">
-                    <label className="checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={groupStudentIds.includes(student.id)}
-                        onChange={() => toggleGroupStudent(student.id)}
-                      />
-                      <span>
-                        {student.last_name} {student.first_name} ({student.username})
-                      </span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
+              {!groupName ? <p className="muted-text">Сначала выберите академическую группу.</p> : null}
+              {groupName && groupStudentSearch.trim().length > 0 && groupStudentSearch.trim().length < 2 ? (
+                <p className="muted-text">Введите минимум 2 символа для поиска.</p>
+              ) : null}
+              {groupName && isGroupStudentsLoading ? <p className="muted-text">Поиск участников...</p> : null}
+              {groupName && groupStudentSearch.trim().length >= 2 && !isGroupStudentsLoading ? (
+                groupStudents.length ? (
+                  <ul className="list selection-list">
+                    {groupStudents.map((student) => {
+                      const checked = selectedGroupStudentIds.includes(student.id)
+                      return (
+                        <li key={student.id} className="list-item">
+                          <label className="checkbox-row">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleGroupStudent(student.id)}
+                            />
+                            <span>
+                              {student.last_name} {student.first_name} ({student.username})
+                            </span>
+                          </label>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : (
+                  <p className="muted-text">Участники по запросу не найдены.</p>
+                )
+              ) : null}
+              {groupName ? (
+                <p className="muted-text">
+                  Выбрано участников: <strong>{selectedGroupStudentIds.length}</strong>
+                </p>
+              ) : null}
             </>
           ) : null}
 
           {mode === 'team' ? (
-            <label>
-              Команда
-              <select value={teamId} onChange={(event) => setTeamId(event.target.value)} required>
-                {teams.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {team.name} ({team.members_count})
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          {mode === 'new_team' ? (
             <>
               <label>
-                Название новой команды
-                <input value={newTeamName} onChange={(event) => setNewTeamName(event.target.value)} required />
-              </label>
-
-              <label>
-                Поиск студентов по всему учреждению
+                Поиск команды
                 <input
-                  value={studentSearch}
-                  onChange={(event) => setStudentSearch(event.target.value)}
-                  placeholder="ФИО, логин или группа"
+                  value={teamSearch}
+                  onChange={(event) => setTeamSearch(event.target.value)}
+                  placeholder="Введите название команды"
                 />
               </label>
-
-              <p>
-                Выбрано: <strong>{newTeamMemberIds.length}</strong> / 20
-              </p>
-
-              <ul className="list selection-list">
-                {students.map((student) => {
-                  const checked = newTeamMemberIds.includes(student.id)
-                  return (
-                    <li key={student.id} className="list-item">
+              {filteredTeams.length ? (
+                <ul className="list selection-list">
+                  {filteredTeams.map((team) => (
+                    <li key={team.id} className="list-item">
                       <label className="checkbox-row">
                         <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleNewTeamMember(student.id)}
-                          disabled={!checked && newTeamMemberIds.length >= 20}
+                          type="radio"
+                          name="team_id"
+                          checked={String(team.id) === String(teamId)}
+                          onChange={() => setTeamId(String(team.id))}
                         />
                         <span>
-                          {student.last_name} {student.first_name} ({student.username}) [{student.group_name || '-'}]
+                          {team.name} ({team.members_count})
                         </span>
                       </label>
                     </li>
-                  )
-                })}
-              </ul>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted-text">Команды по фильтру не найдены.</p>
+              )}
+              <button type="button" onClick={() => navigate('/teams')}>
+                Создать новую команду на отдельной странице
+              </button>
             </>
           ) : null}
 

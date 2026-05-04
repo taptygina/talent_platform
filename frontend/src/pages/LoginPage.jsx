@@ -1,5 +1,5 @@
 ﻿import { useState } from 'react'
-import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 
 import { useAuth } from '../features/auth/AuthContext'
 
@@ -44,6 +44,8 @@ export function LoginPage() {
           Пароль
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
         </label>
+
+        <Link to="/forgot-password">Забыли пароль?</Link>
 
         {error ? <p className="error">{error}</p> : null}
 

@@ -1,5 +1,7 @@
 from datetime import timedelta
+import threading
 
+from django.db import close_old_connections
 from django.db.models import BooleanField, Count, Exists, OuterRef, Q, Value
 from django.core.files.storage import default_storage
 from django.utils.dateparse import parse_date
@@ -44,6 +46,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
     ordering_fields = ("created_at", "start_date", "end_date", "title", "status")
 
     def get_queryset(self):
+        # Считаем агрегаты заранее, чтобы избежать лишних дополнительных запросов в списках и карточках.
         queryset = (
             Project.objects.select_related("supervisor", "team")
             .prefetch_related("participants", "team__members")
@@ -59,6 +62,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
             )
         else:
             queryset = queryset.annotate(liked_by_me=Value(False, output_field=BooleanField()))
+        if self.action == "list":
+            # Архив по умолчанию скрыт и показывается только по явному флагу.
+            include_archived = (self.request.query_params.get("include_archived") or "").strip().lower()
+            if include_archived not in {"1", "true", "yes"}:
+                queryset = queryset.filter(is_archived=False)
         return queryset
 
     def get_serializer_class(self):
@@ -73,13 +81,17 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], permission_classes=[permissions.IsAuthenticated])
     def groups(self, request):
+        search = (request.query_params.get("search") or "").strip()
+        queryset = User.objects.filter(role=UserRole.STUDENT)
+        if search:
+            queryset = queryset.filter(group_name__icontains=search)
         groups = (
-            User.objects.filter(role=UserRole.STUDENT)
+            queryset
             .exclude(group_name="")
             .values("group_name")
             .annotate(students_count=Count("id"))
             .order_by("group_name")
-        )
+        )[:100]
         return Response(list(groups))
 
     @action(detail=False, methods=["get"], permission_classes=[permissions.IsAuthenticated])
@@ -161,6 +173,29 @@ class ProjectViewSet(viewsets.ModelViewSet):
         project.is_published = False
         project.save(update_fields=["is_published", "updated_at"])
         return Response({"detail": "Публикация проекта снята."})
+
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    def archive(self, request, pk=None):
+        project = self.get_object()
+        if request.user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
+        if request.user.role == UserRole.TEACHER and project.supervisor_id != request.user.id:
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
+        project.is_archived = True
+        project.save(update_fields=["is_archived", "updated_at"])
+        return Response({"detail": "Проект перенесен в архив."}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    def unarchive(self, request, pk=None):
+        project = self.get_object()
+        if request.user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
+        if request.user.role == UserRole.TEACHER and project.supervisor_id != request.user.id:
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
+        project.is_archived = False
+        project.save(update_fields=["is_archived", "updated_at"])
+        return Response({"detail": "Проект восстановлен из архива."}, status=status.HTTP_200_OK)
 
     @action(
         detail=False,
@@ -411,6 +446,7 @@ class ProjectStageViewSet(viewsets.ModelViewSet):
         stage = self.get_object()
         old_status = stage.status
         user = request.user
+        # Один маршрут обслуживает три роли с разными правами изменения.
         if user.role in {UserRole.CURATOR, UserRole.ADMIN}:
             response = super().update(request, *args, **kwargs)
             stage.refresh_from_db()
@@ -490,18 +526,45 @@ class ProjectCommentViewSet(
 ):
     serializer_class = ProjectCommentSerializer
     permission_classes = [permissions.IsAuthenticated]
-    filterset_fields = ("project", "is_approved")
+    filterset_fields = ("project", "stage", "is_approved")
     search_fields = ("text", "author__first_name", "author__last_name")
     ordering_fields = ("created_at",)
 
     def get_queryset(self):
-        queryset = ProjectComment.objects.select_related("project", "author")
+        queryset = ProjectComment.objects.select_related("project", "author", "stage")
         if self.request.user.role in {UserRole.CURATOR, UserRole.ADMIN}:
             return queryset
-        return queryset.filter(is_approved=True)
+        return queryset
 
     def perform_create(self, serializer):
-        serializer.save(author=self.request.user, is_approved=False)
+        comment = serializer.save(author=self.request.user, is_approved=True)
+        recipients = comment.project.participants.exclude(id=self.request.user.id)
+        if comment.project.supervisor_id != self.request.user.id:
+            recipients = (recipients | User.objects.filter(id=comment.project.supervisor_id)).distinct()
+        recipient_ids = list(recipients.values_list("id", flat=True))
+        actor = self.request.user
+        project = comment.project
+        stage = comment.stage
+        message = f"{actor.full_name or actor.username}: {comment.text[:200]}"
+
+        def _worker():
+            # Массовая рассылка уведомлений вынесена в фон,
+            # чтобы запрос создания комментария отвечал быстро.
+            close_old_connections()
+            try:
+                create_notifications(
+                    User.objects.filter(id__in=recipient_ids),
+                    actor=actor,
+                    project=project,
+                    stage=stage,
+                    type=NotificationType.COMMENT_PENDING,
+                    title="Комментарий опубликован",
+                    message=message,
+                )
+            finally:
+                close_old_connections()
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     @action(detail=True, methods=["post"], permission_classes=[IsCuratorOrReadOnly])
     def approve(self, request, pk=None):

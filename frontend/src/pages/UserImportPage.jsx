@@ -16,6 +16,7 @@ export function UserImportPage() {
   const [role, setRole] = useState('student')
   const [file, setFile] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isPdfDownloading, setIsPdfDownloading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
 
@@ -61,13 +62,23 @@ export function UserImportPage() {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
       setResult(data)
-      if ((data.generated_accounts || []).length > 0) {
-        await downloadCredentialsPdf(data.generated_accounts)
-      }
     } catch (requestError) {
       setError(requestError.response?.data?.detail || 'Ошибка импорта пользователей.')
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const onDownloadCredentialsPdf = async () => {
+    if (!(result?.generated_accounts || []).length) return
+    setError('')
+    setIsPdfDownloading(true)
+    try {
+      await downloadCredentialsPdf(result.generated_accounts)
+    } catch (requestError) {
+      setError(requestError.response?.data?.detail || 'Не удалось скачать PDF с учетными данными.')
+    } finally {
+      setIsPdfDownloading(false)
     }
   }
 
@@ -164,14 +175,15 @@ export function UserImportPage() {
           {result.generated_accounts?.length ? (
             <>
               <h3>Сгенерированные учетные записи</h3>
+              <button type="button" onClick={onDownloadCredentialsPdf} disabled={isPdfDownloading}>
+                {isPdfDownloading ? 'Подготовка PDF...' : 'Скачать PDF с учетными данными'}
+              </button>
               <ul className="list">
                 {result.generated_accounts.map((account) => (
                   <li key={account.id} className="list-item">
                     <div>
                       <strong>{account.full_name || account.username}</strong>
-                      <p>
-                        {account.username} / {account.password}
-                      </p>
+                      <p>{account.email || '-'}</p>
                     </div>
                   </li>
                 ))}

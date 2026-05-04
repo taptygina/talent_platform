@@ -47,6 +47,45 @@ const submissionStatusColors = {
   none: '#7d8797',
 }
 
+function extractApiErrorMessage(error, fallbackMessage) {
+  const data = error?.response?.data
+  if (!data) return fallbackMessage
+  if (typeof data === 'string') return data
+  if (typeof data.detail === 'string' && data.detail.trim()) return data.detail
+
+  const collect = (value) => {
+    if (!value) return []
+    if (typeof value === 'string') return [value]
+    if (Array.isArray(value)) return value.flatMap((item) => collect(item))
+    if (typeof value === 'object') return Object.values(value).flatMap((item) => collect(item))
+    return []
+  }
+
+  const messages = collect(data).map((item) => String(item).trim()).filter(Boolean)
+  return messages[0] || fallbackMessage
+}
+
+async function extractBlobErrorMessage(error, fallbackMessage) {
+  const data = error?.response?.data
+  if (!data) return extractApiErrorMessage(error, fallbackMessage)
+
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text()
+      if (!text) return fallbackMessage
+      const parsed = JSON.parse(text)
+      if (typeof parsed?.detail === 'string' && parsed.detail.trim()) return parsed.detail
+      if (typeof parsed === 'string' && parsed.trim()) return parsed
+      return fallbackMessage
+    } catch {
+      return fallbackMessage
+    }
+  }
+
+  return extractApiErrorMessage(error, fallbackMessage)
+}
+
+
 function resolveAssetUrl(url) {
   if (!url) return ''
   if (url.startsWith('http://') || url.startsWith('https://')) return url
@@ -75,6 +114,7 @@ export function ProjectDetailPage() {
   const [saving, setSaving] = useState(false)
   const [projectSaving, setProjectSaving] = useState(false)
   const [projectDeleting, setProjectDeleting] = useState(false)
+  const [projectArchiving, setProjectArchiving] = useState(false)
   const [likeLoading, setLikeLoading] = useState(false)
   const [commentSubmitting, setCommentSubmitting] = useState(false)
 
@@ -87,18 +127,13 @@ export function ProjectDetailPage() {
   const [inviteSubmitting, setInviteSubmitting] = useState(false)
   const [isEditingProject, setIsEditingProject] = useState(false)
   const [projectCoverFile, setProjectCoverFile] = useState(null)
+  const [templates, setTemplates] = useState([])
   const [projectForm, setProjectForm] = useState({
     title: '',
     description: '',
     type: 'other',
     status: 'planned',
-  })
-  const [newStage, setNewStage] = useState({
-    title: '',
-    description: '',
-    task_text: '',
-    order: 1,
-    deadline: '',
+    template_id: '',
   })
   const [editState, setEditState] = useState({})
   const [submissionDrafts, setSubmissionDrafts] = useState({})
@@ -118,6 +153,8 @@ export function ProjectDetailPage() {
     () => ['teacher', 'curator', 'admin'].includes(user?.role),
     [user?.role],
   )
+  const canUploadStageMaterialsInline = user?.role === 'admin'
+  const canInlineReviewSubmissions = user?.role === 'admin'
   const canEditProject = canManageStages
   const canModerateComments = useMemo(() => ['curator', 'admin'].includes(user?.role), [user?.role])
   const canPublish = canModerateComments
@@ -179,6 +216,23 @@ export function ProjectDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onlyWithDebts, matrixStudents, project?.stages])
 
+  const projectLevelComments = useMemo(
+    () => comments.filter((comment) => !comment.stage),
+    [comments],
+  )
+
+  const stageCommentsMap = useMemo(() => {
+    // Группируем комментарии по идентификатору этапа для быстрого рендера в карточках этапов.
+    const map = new Map()
+    comments.forEach((comment) => {
+      if (!comment.stage) return
+      const key = Number(comment.stage)
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push(comment)
+    })
+    return map
+  }, [comments])
+
   const loadProject = async () => {
     try {
       const { data } = await apiClient.get(`/projects/${projectId}/`)
@@ -188,6 +242,7 @@ export function ProjectDetailPage() {
         description: data.description || '',
         type: data.type || 'other',
         status: data.status || 'planned',
+        template_id: data.template?.id ? String(data.template.id) : '',
       })
     } catch {
       setError('Не удалось загрузить проект.')
@@ -226,6 +281,28 @@ export function ProjectDetailPage() {
       setLiked(false)
     }
   }
+
+  useEffect(() => {
+    if (!canEditProject) return
+    let ignore = false
+    const loadTemplates = async () => {
+      try {
+        const { data } = await apiClient.get('/projects/templates/', {
+          params: { is_active: true },
+        })
+        if (!ignore) {
+          const rows = data?.results || data || []
+          setTemplates(rows)
+        }
+      } catch {
+        if (!ignore) setTemplates([])
+      }
+    }
+    loadTemplates()
+    return () => {
+      ignore = true
+    }
+  }, [canEditProject])
 
   useEffect(() => {
     let ignore = false
@@ -322,34 +399,27 @@ export function ProjectDetailPage() {
     setCommentSubmitting(true)
     setCommentsError('')
     try {
-      const commentPayloadText = (() => {
-        const base = commentText.trim()
-        if (!commentStageId) return base
-        const selectedStage = (project?.stages || []).find((stage) => stage.id === Number(commentStageId))
-        const stageTitle = selectedStage ? selectedStage.title : 'Этап'
-        return `[Этап: ${stageTitle}] ${base}`
-      })()
-
-      await apiClient.post('/projects/comments/', {
+      const { data } = await apiClient.post('/projects/comments/', {
         project: Number(projectId),
-        text: commentPayloadText,
+        stage: commentStageId ? Number(commentStageId) : null,
+        text: commentText.trim(),
       })
       setCommentText('')
       setCommentStageId('')
-      await Promise.all([loadComments(), loadProject()])
+      setComments((prev) => [data, ...prev])
+      // Локально синхронизируем счетчик без дополнительной полной перезагрузки.
+      setProject((prev) =>
+        prev
+          ? {
+              ...prev,
+              comments_count: (prev.comments_count || 0) + 1,
+            }
+          : prev,
+      )
     } catch {
       setCommentsError('Не удалось отправить комментарий.')
     } finally {
       setCommentSubmitting(false)
-    }
-  }
-
-  const onApproveComment = async (commentId) => {
-    try {
-      await apiClient.post(`/projects/comments/${commentId}/approve/`)
-      await Promise.all([loadComments(), loadProject()])
-    } catch {
-      setCommentsError('Не удалось подтвердить комментарий.')
     }
   }
 
@@ -396,6 +466,7 @@ export function ProjectDetailPage() {
         description: projectForm.description,
         type: projectForm.type,
         status: projectForm.status,
+        template_id: projectForm.template_id ? Number(projectForm.template_id) : null,
       }
       if (projectCoverFile) {
         const formData = new FormData()
@@ -456,28 +527,25 @@ export function ProjectDetailPage() {
     }
   }
 
-  const onCreateStage = async (event) => {
-    event.preventDefault()
+  const onArchiveProject = async () => {
+    const isConfirmed = window.confirm('Перенести проект в архив?')
+    if (!isConfirmed) return
+
+    setProjectArchiving(true)
     setError('')
-    setSaving(true)
     try {
-      await apiClient.post('/projects/stages/', {
-        project: Number(projectId),
-        title: newStage.title,
-        description: newStage.description,
-        task_text: newStage.task_text,
-        order: Number(newStage.order),
-        deadline: newStage.deadline || null,
-        status: 'open',
-      })
-      setNewStage({ title: '', description: '', task_text: '', order: 1, deadline: '' })
+      await apiClient.post(`/projects/${projectId}/archive/`)
       await loadProject()
+      showToast('Проект добавлен в архив.')
     } catch (requestError) {
-      setError(requestError.response?.data?.detail || 'Не удалось создать этап.')
+      setError(requestError.response?.data?.detail || 'Не удалось архивировать проект.')
     } finally {
-      setSaving(false)
+      setProjectArchiving(false)
     }
   }
+
+  const openStageManagePage = () => navigate(`/projects/${projectId}/stages/manage`)
+  const openStageReviewPage = () => navigate(`/stages/review?project=${projectId}`)
 
   const openEdit = (stage) => {
     setEditState((prev) => ({
@@ -618,7 +686,8 @@ export function ProjectDetailPage() {
       link.remove()
       window.URL.revokeObjectURL(url)
     } catch (requestError) {
-      setError(requestError.response?.data?.detail || 'Не удалось сформировать итоговый .docx файл.')
+      const message = await extractBlobErrorMessage(requestError, 'Не удалось сформировать итоговый .docx файл.')
+      setError(message)
     }
   }
 
@@ -638,13 +707,43 @@ export function ProjectDetailPage() {
       link.remove()
       window.URL.revokeObjectURL(url)
     } catch (requestError) {
-      setError(requestError.response?.data?.detail || 'Не удалось сформировать .xlsx матрицу этапов.')
+      const message = await extractBlobErrorMessage(requestError, 'Не удалось сформировать .xlsx матрицу этапов.')
+      setError(message)
     }
   }
 
   const onSaveStage = async (stageId) => {
-    const payload = editState[stageId]
-    if (!payload) return
+    const draft = editState[stageId]
+    if (!draft) return
+    const stage = (project?.stages || []).find((item) => item.id === stageId)
+    if (!stage) {
+      setError('Этап не найден для обновления.')
+      return
+    }
+
+    let payload = null
+    if (canManageStages) {
+      payload = {
+        title: draft.title,
+        description: draft.description || '',
+        task_text: draft.task_text || '',
+        order: Number(draft.order || 1),
+        deadline: draft.deadline || null,
+        status: draft.status,
+        student_report: draft.student_report || '',
+        teacher_feedback: draft.teacher_feedback || '',
+      }
+      const prevDeadline = stage.deadline || null
+      const nextDeadline = draft.deadline || null
+      if (prevDeadline !== nextDeadline) {
+        payload.deadline_change_reason = 'Изменение срока этапа'
+      }
+    } else {
+      payload = {
+        student_report: draft.student_report || '',
+        status: draft.status,
+      }
+    }
 
     setError('')
     setSaving(true)
@@ -657,7 +756,7 @@ export function ProjectDetailPage() {
         return next
       })
     } catch (requestError) {
-      setError(requestError.response?.data?.detail || 'Не удалось обновить этап.')
+      setError(extractApiErrorMessage(requestError, 'Не удалось обновить этап.'))
     } finally {
       setSaving(false)
     }
@@ -725,9 +824,24 @@ export function ProjectDetailPage() {
                   Скачать матрицу этапов .xlsx
                 </button>
               ) : null}
+              {canManageStages ? (
+                <button type="button" onClick={openStageManagePage}>
+                  Управление этапами
+                </button>
+              ) : null}
+              {canManageStages ? (
+                <button type="button" onClick={openStageReviewPage}>
+                  Проверка сдач этапов
+                </button>
+              ) : null}
               {canEditProject ? (
                 <button type="button" onClick={() => setIsEditingProject((prev) => !prev)}>
                   {isEditingProject ? 'Отменить редактирование' : 'Редактировать проект'}
+                </button>
+              ) : null}
+              {canEditProject ? (
+                <button type="button" disabled={projectArchiving || project.is_archived} onClick={onArchiveProject}>
+                  {project.is_archived ? 'В архиве' : projectArchiving ? 'Архивирование...' : 'Добавить в архив'}
                 </button>
               ) : null}
               {canEditProject ? (
@@ -815,6 +929,20 @@ export function ProjectDetailPage() {
                 </select>
               </label>
               <label>
+                Шаблон документа
+                <select
+                  value={projectForm.template_id}
+                  onChange={(event) => setProjectForm((prev) => ({ ...prev, template_id: event.target.value }))}
+                >
+                  <option value="">Без шаблона</option>
+                  {templates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
                 Статус проекта
                 <select
                   value={projectForm.status}
@@ -841,6 +969,15 @@ export function ProjectDetailPage() {
               </button>
             </form>
           ) : null}
+
+          <div className="quick-anchor-bar">
+            <a className="button-link" href="#project-stages">
+              Этапы
+            </a>
+            <a className="button-link" href="#project-participants">
+              Участники
+            </a>
+          </div>
         </article>
 
         {canInviteSupervisor ? (
@@ -888,115 +1025,7 @@ export function ProjectDetailPage() {
           </article>
         ) : null}
 
-        <article className="panel">
-          <h2>Комментарии</h2>
-          <form className="project-form" onSubmit={onCreateComment}>
-            {canManageStages ? (
-              <label>
-                Комментарий к этапу (необязательно)
-                <select value={commentStageId} onChange={(event) => setCommentStageId(event.target.value)}>
-                  <option value="">Весь проект</option>
-                  {(project.stages || []).map((stage) => (
-                    <option key={stage.id} value={stage.id}>
-                      {stage.order}. {stage.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <label>
-              Новый комментарий
-              <textarea
-                rows={3}
-                value={commentText}
-                onChange={(event) => setCommentText(event.target.value)}
-                placeholder="Напишите комментарий по проекту"
-              />
-            </label>
-            <button type="submit" disabled={commentSubmitting}>
-              {commentSubmitting ? 'Отправка...' : 'Отправить комментарий'}
-            </button>
-          </form>
-
-          {commentsError ? <p className="error">{commentsError}</p> : null}
-          {commentsLoading ? <p>Загрузка комментариев...</p> : null}
-
-          <ul className="list">
-            {comments.map((comment) => (
-              <li key={comment.id} className="list-item">
-                <div>
-                  <strong>{comment.author_name || 'Пользователь'}</strong>
-                  <p>{comment.text}</p>
-                  <p>{new Date(comment.created_at).toLocaleString('ru-RU')}</p>
-                  <p>Статус: {comment.is_approved ? 'одобрен' : 'ожидает модерации'}</p>
-                </div>
-                {canModerateComments && !comment.is_approved ? (
-                  <button type="button" onClick={() => onApproveComment(comment.id)}>
-                    Одобрить
-                  </button>
-                ) : null}
-              </li>
-            ))}
-            {!commentsLoading && comments.length === 0 ? <li className="list-item">Комментариев пока нет.</li> : null}
-          </ul>
-        </article>
-
-        {canManageStages ? (
-          <article className="panel">
-            <details className="section-collapse">
-              <summary>Создание этапа</summary>
-            <form className="project-form" onSubmit={onCreateStage}>
-              <label>
-                Название этапа
-                <input
-                  value={newStage.title}
-                  onChange={(event) => setNewStage((prev) => ({ ...prev, title: event.target.value }))}
-                  required
-                />
-              </label>
-              <label>
-                Описание
-                <textarea
-                  rows={3}
-                  value={newStage.description}
-                  onChange={(event) => setNewStage((prev) => ({ ...prev, description: event.target.value }))}
-                />
-              </label>
-              <label>
-                Задание этапа
-                <textarea
-                  rows={3}
-                  value={newStage.task_text}
-                  onChange={(event) => setNewStage((prev) => ({ ...prev, task_text: event.target.value }))}
-                />
-              </label>
-              <label>
-                Порядковый номер
-                <input
-                  type="number"
-                  min="1"
-                  value={newStage.order}
-                  onChange={(event) => setNewStage((prev) => ({ ...prev, order: Number(event.target.value || 1) }))}
-                  required
-                />
-              </label>
-              <label>
-                Срок выполнения
-                <input
-                  type="date"
-                  value={newStage.deadline}
-                  onChange={(event) => setNewStage((prev) => ({ ...prev, deadline: event.target.value }))}
-                />
-              </label>
-              <button disabled={saving} type="submit">
-                {saving ? 'Сохранение...' : 'Добавить этап'}
-              </button>
-            </form>
-            </details>
-          </article>
-        ) : null}
-
-        <article className="panel">
+        <article className="panel anchor-target" id="project-stages">
           <h2>Этапы проекта</h2>
           {error ? <p className="error">{error}</p> : null}
 
@@ -1063,7 +1092,7 @@ export function ProjectDetailPage() {
           <ul className="list">
             {project.stages?.map((stage) => {
               const stageEdit = editState[stage.id]
-              const editable = canManageStages
+              const editable = false
 
               if (!stageEdit) {
                 return (
@@ -1072,6 +1101,16 @@ export function ProjectDetailPage() {
                       <summary>{stage.order}. {stage.title} — {formatStageStatus(stage.status)}</summary>
                       <div style={{ marginTop: '10px' }}>
                         <p>Срок: {stage.deadline || '-'}</p>
+                      {canManageStages ? (
+                        <div className="toolbar-actions" style={{ marginBottom: '8px' }}>
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/stages/review?project=${projectId}&stage=${stage.id}`)}
+                          >
+                            Перейти к проверке этого этапа
+                          </button>
+                        </div>
+                      ) : null}
                       {stage.task_text ? (
                         <>
                           <p>Задание:</p>
@@ -1091,18 +1130,35 @@ export function ProjectDetailPage() {
                         </>
                       ) : null}
                       <div className="project-form" style={{ marginTop: '10px' }}>
+                        <h4>Комментарии по этапу</h4>
+                        <ul className="list compact-list">
+                          {(stageCommentsMap.get(stage.id) || []).map((comment) => (
+                            <li key={comment.id} className="list-item">
+                              <p>
+                                <strong>{comment.author_name || 'Пользователь'}</strong>
+                              </p>
+                              <p>{comment.text}</p>
+                              <p>{new Date(comment.created_at).toLocaleString('ru-RU')}</p>
+                            </li>
+                          ))}
+                          {!(stageCommentsMap.get(stage.id) || []).length ? (
+                            <li className="list-item">Комментариев по этапу пока нет.</li>
+                          ) : null}
+                        </ul>
+                      </div>
+                      <div className="project-form" style={{ marginTop: '10px' }}>
                         <h4>Материалы этапа</h4>
                         <ul className="list compact-list">
                           {(stage.materials || []).map((material) => (
                             <li key={material.id} className="list-item">
                               <a href={resolveAssetUrl(material.file)} target="_blank" rel="noreferrer">
-                                Открыть файл #{material.id}
+                                Открыть файл №{material.id}
                               </a>
                             </li>
                           ))}
                           {!stage.materials?.length ? <li className="list-item">Материалов пока нет.</li> : null}
                         </ul>
-                        {canManageStages ? (
+                        {canUploadStageMaterialsInline ? (
                           <>
                             <FileDropZone
                               label="Добавить материал этапа"
@@ -1165,7 +1221,7 @@ export function ProjectDetailPage() {
                                 {(getMySubmission(stage).files || []).map((fileRow) => (
                                   <li key={fileRow.id} className="list-item">
                                     <a href={resolveAssetUrl(fileRow.file)} target="_blank" rel="noreferrer">
-                                      Файл #{fileRow.id}
+                                      Файл №{fileRow.id}
                                     </a>
                                   </li>
                                 ))}
@@ -1197,7 +1253,7 @@ export function ProjectDetailPage() {
                         </div>
                       ) : null}
 
-                      {canManageStages && stage.submissions?.length ? (
+                      {canInlineReviewSubmissions ? (
                         <div className="project-form" style={{ marginTop: '10px' }}>
                           <h4>Сдачи студентов</h4>
                           {stage.submissions.map((submission) => (
@@ -1211,7 +1267,7 @@ export function ProjectDetailPage() {
                                 {(submission.files || []).map((fileRow) => (
                                   <li key={fileRow.id} className="list-item">
                                     <a href={resolveAssetUrl(fileRow.file)} target="_blank" rel="noreferrer">
-                                      Файл сдачи #{fileRow.id}
+                                      Файл сдачи №{fileRow.id}
                                     </a>
                                   </li>
                                 ))}
@@ -1427,10 +1483,59 @@ export function ProjectDetailPage() {
             })}
           </ul>
         </article>
+
+        <article className="panel">
+          <h2>Комментарии</h2>
+          <form className="project-form" onSubmit={onCreateComment}>
+            <label>
+              Комментарий к этапу (необязательно)
+              <select value={commentStageId} onChange={(event) => setCommentStageId(event.target.value)}>
+                <option value="">Весь проект</option>
+                {(project.stages || []).map((stage) => (
+                  <option key={stage.id} value={stage.id}>
+                    {stage.order}. {stage.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Новый комментарий
+              <textarea
+                rows={3}
+                value={commentText}
+                onChange={(event) => setCommentText(event.target.value)}
+                placeholder="Напишите комментарий по проекту"
+              />
+            </label>
+            <button type="submit" disabled={commentSubmitting}>
+              {commentSubmitting ? 'Отправка...' : 'Опубликовать комментарий'}
+            </button>
+          </form>
+
+          {commentsError ? <p className="error">{commentsError}</p> : null}
+          {commentsLoading ? <p>Загрузка комментариев...</p> : null}
+
+          <h3>Комментарии руководителя по проекту</h3>
+          <ul className="list">
+            {projectLevelComments.map((comment) => (
+              <li key={comment.id} className="list-item">
+                <div>
+                  <strong>{comment.author_name || 'Пользователь'}</strong>
+                  <p>{comment.text}</p>
+                  <p>{new Date(comment.created_at).toLocaleString('ru-RU')}</p>
+                </div>
+              </li>
+            ))}
+            {!commentsLoading && projectLevelComments.length === 0 ? (
+              <li className="list-item">Комментариев по проекту пока нет.</li>
+            ) : null}
+          </ul>
+        </article>
+
       </section>
 
       <aside className="side-column">
-        <article className="panel soft-panel">
+        <article className="panel soft-panel anchor-target" id="project-participants">
           <h2>Участники</h2>
           <ul className="list compact-list">
             {project.participants?.map((participant) => (
@@ -1449,3 +1554,5 @@ export function ProjectDetailPage() {
     </main>
   )
 }
+
+

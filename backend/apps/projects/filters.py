@@ -17,6 +17,7 @@ class ProjectFilter(django_filters.FilterSet):
             "supervisor",
             "team",
             "is_published",
+            "is_archived",
             "start_date_from",
             "start_date_to",
             "end_date_from",

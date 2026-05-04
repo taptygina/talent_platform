@@ -82,20 +82,22 @@ function PieChart({ title, data }) {
   const total = Math.max(1, data.reduce((sum, item) => sum + item.value, 0))
   const colors = ['#2059b8', '#e16a2b', '#2b8f5f', '#d29b1f', '#6850b8', '#4293aa']
 
-  let startAngle = -Math.PI / 2
-  const slices = data.map((item, index) => {
-    const angle = (item.value / total) * Math.PI * 2
-    const endAngle = startAngle + angle
-    const x1 = cx + radius * Math.cos(startAngle)
-    const y1 = cy + radius * Math.sin(startAngle)
-    const x2 = cx + radius * Math.cos(endAngle)
-    const y2 = cy + radius * Math.sin(endAngle)
-    const largeArc = angle > Math.PI ? 1 : 0
-    const d = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`
-    const slice = { d, color: colors[index % colors.length], label: item.label, value: item.value }
-    startAngle = endAngle
-    return slice
-  })
+  const slices = data.reduce(
+    (acc, item, index) => {
+      const angle = (item.value / total) * Math.PI * 2
+      const endAngle = acc.startAngle + angle
+      const x1 = cx + radius * Math.cos(acc.startAngle)
+      const y1 = cy + radius * Math.sin(acc.startAngle)
+      const x2 = cx + radius * Math.cos(endAngle)
+      const y2 = cy + radius * Math.sin(endAngle)
+      const largeArc = angle > Math.PI ? 1 : 0
+      const d = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`
+      acc.slices.push({ d, color: colors[index % colors.length], label: item.label, value: item.value })
+      acc.startAngle = endAngle
+      return acc
+    },
+    { startAngle: -Math.PI / 2, slices: [] },
+  ).slices
 
   return (
     <section className="panel soft-panel">
@@ -207,9 +209,9 @@ export function PortfolioPage() {
       </section>
 
       <section className="charts-grid">
-        <BarChart title="Топ студентов (столбчатая диаграмма)" data={studentsChartData} />
-        <LineChart title="Топ преподавателей (линейная диаграмма)" data={teachersChartData} />
-        <PieChart title="Вклад преподавателей (круговая диаграмма)" data={teachersChartData.slice(0, 6)} />
+        <BarChart title="Топ студентов" data={studentsChartData} />
+        <LineChart title="Топ преподавателей" data={teachersChartData} />
+        <PieChart title="Вклад преподавателей" data={teachersChartData.slice(0, 6)} />
       </section>
 
       <section className="data-grid">
@@ -220,7 +222,7 @@ export function PortfolioPage() {
               <li key={student.id} className="list-item">
                 <div>
                   <strong>
-                    #{index + 1} {student.last_name} {student.first_name} ({student.username})
+                    №{index + 1} {student.last_name} {student.first_name}
                   </strong>
                   <p>Группа: {student.group_name || '-'}</p>
                 </div>
@@ -237,7 +239,7 @@ export function PortfolioPage() {
               <li key={teacher.id} className="list-item">
                 <div>
                   <strong>
-                    #{index + 1} {teacher.last_name} {teacher.first_name} ({teacher.username})
+                    №{index + 1} {teacher.last_name} {teacher.first_name}
                   </strong>
                 </div>
                 <strong>{teacher.completed_count}</strong>

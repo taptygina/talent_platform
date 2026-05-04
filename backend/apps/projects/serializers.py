@@ -1,4 +1,4 @@
-from django.db import transaction
+﻿from django.db import transaction
 from django.utils.text import slugify
 from django.utils import timezone
 from rest_framework import serializers
@@ -163,12 +163,20 @@ class ProjectTemplateSerializer(serializers.ModelSerializer):
             "project_type",
             "description",
             "template_file",
+            "format_profile",
             "is_active",
             "created_by",
             "sections",
             "created_at",
         )
-        read_only_fields = ("created_by", "created_at")
+        read_only_fields = ("created_by", "created_at", "format_profile")
+
+    def validate(self, attrs):
+        if self.instance is None and not attrs.get("template_file"):
+            raise serializers.ValidationError({
+                "template_file": "РќРµР»СЊР·СЏ СЃРѕР·РґР°С‚СЊ РїСѓСЃС‚РѕР№ С€Р°Р±Р»РѕРЅ. Р—Р°РіСЂСѓР·РёС‚Рµ .docx С„Р°Р№Р» С€Р°Р±Р»РѕРЅР°.",
+            })
+        return attrs
 
 
 class ProjectListSerializer(serializers.ModelSerializer):
@@ -190,6 +198,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
             "start_date",
             "end_date",
             "is_published",
+            "is_archived",
             "supervisor_name",
             "academic_group_name",
             "team_name",
@@ -268,15 +277,32 @@ class ProjectStageSubmissionSerializer(serializers.ModelSerializer):
             "files",
         )
         read_only_fields = ("student", "submitted_at", "checked_at", "updated_at")
+        validators = []
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        student = attrs.get("student")
+        stage = attrs.get("stage")
+
+        if not student and request and request.user.is_authenticated and request.user.role == UserRole.STUDENT:
+            student = request.user
+            attrs["student"] = student
+
+        if self.instance is None and stage and student:
+            if ProjectStageSubmission.objects.filter(stage=stage, student=student).exists():
+                raise serializers.ValidationError({"detail": "РЎРґР°С‡Р° РїРѕ СЌС‚РѕРјСѓ СЌС‚Р°РїСѓ СѓР¶Рµ СЃРѕР·РґР°РЅР°."})
+
+        return attrs
 
 
 class ProjectStageReviewSerializer(serializers.ModelSerializer):
     teacher_name = serializers.CharField(source="teacher.full_name", read_only=True)
     decision = serializers.ChoiceField(choices=StageReviewDecision.choices)
+    score = serializers.IntegerField(required=False, allow_null=True, min_value=0, max_value=100)
 
     class Meta:
         model = ProjectStageReview
-        fields = ("id", "submission", "teacher", "teacher_name", "decision", "comment", "created_at")
+        fields = ("id", "submission", "teacher", "teacher_name", "decision", "score", "comment", "created_at")
         read_only_fields = ("teacher", "created_at")
 
 
@@ -316,7 +342,7 @@ class ProjectStageSerializer(serializers.ModelSerializer):
         new_deadline = validated_data.get("deadline", instance.deadline)
         deadline_changed = old_deadline != new_deadline
         if deadline_changed and not reason:
-            raise serializers.ValidationError({"deadline_change_reason": "Укажите причину изменения срока этапа."})
+            reason = "Изменение срока этапа."
 
         stage = super().update(instance, validated_data)
         if deadline_changed:
@@ -390,6 +416,7 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
             "deadline_changes",
             "cover_image_url",
             "is_published",
+            "is_archived",
             "supervisor",
             "supervisor_id",
             "academic_group_name",
@@ -430,9 +457,9 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
         new_members = attrs.get("new_team_member_ids", [])
         if has_new_team:
             if not attrs.get("new_team_name"):
-                raise serializers.ValidationError("Для создания команды укажите new_team_name.")
+                raise serializers.ValidationError("Р”Р»СЏ СЃРѕР·РґР°РЅРёСЏ РєРѕРјР°РЅРґС‹ СѓРєР°Р¶РёС‚Рµ new_team_name.")
             if not new_members:
-                raise serializers.ValidationError("Для создания команды укажите new_team_member_ids.")
+                raise serializers.ValidationError("Р”Р»СЏ СЃРѕР·РґР°РЅРёСЏ РєРѕРјР°РЅРґС‹ СѓРєР°Р¶РёС‚Рµ new_team_member_ids.")
             max_members = _max_team_members_limit()
             if len(new_members) > max_members:
                 raise serializers.ValidationError(f"В новой команде может быть не более {max_members} участников.")
@@ -441,7 +468,7 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
             group_name = attrs["group_name"]
             group_students = User.objects.filter(role=UserRole.STUDENT, group_name=group_name)
             if not group_students.exists():
-                raise serializers.ValidationError(f"В группе '{group_name}' нет студентов.")
+                raise serializers.ValidationError(f"Р’ РіСЂСѓРїРїРµ '{group_name}' РЅРµС‚ СЃС‚СѓРґРµРЅС‚РѕРІ.")
             selected_group_students = attrs.get("group_student_ids", [])
             if selected_group_students:
                 invalid = [
@@ -450,7 +477,7 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
                     if student.role != UserRole.STUDENT or student.group_name != group_name
                 ]
                 if invalid:
-                    raise serializers.ValidationError(f"Студенты {invalid} не относятся к группе '{group_name}'.")
+                    raise serializers.ValidationError(f"РЎС‚СѓРґРµРЅС‚С‹ {invalid} РЅРµ РѕС‚РЅРѕСЃСЏС‚СЃСЏ Рє РіСЂСѓРїРїРµ '{group_name}'.")
 
         return attrs
 
@@ -542,7 +569,7 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
         new_end_date = validated_data.get("end_date", instance.end_date)
         deadline_changed = old_start_date != new_start_date or old_end_date != new_end_date
         if deadline_changed and not reason:
-            raise serializers.ValidationError({"deadline_change_reason": "Укажите причину изменения сроков проекта."})
+            reason = "Изменение сроков проекта."
 
         for field, value in validated_data.items():
             setattr(instance, field, value)
@@ -598,8 +625,15 @@ class ProjectCommentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ProjectComment
-        fields = ("id", "project", "author", "author_name", "text", "is_approved", "created_at")
+        fields = ("id", "project", "stage", "author", "author_name", "text", "is_approved", "created_at")
         read_only_fields = ("author", "is_approved")
+
+    def validate(self, attrs):
+        project = attrs.get("project") or getattr(self.instance, "project", None)
+        stage = attrs.get("stage") if "stage" in attrs else getattr(self.instance, "stage", None)
+        if stage is not None and project is not None and stage.project_id != project.id:
+            raise serializers.ValidationError("Этап комментария должен принадлежать выбранному проекту.")
+        return attrs
 
 
 class ProjectLikeSerializer(serializers.ModelSerializer):
@@ -667,3 +701,6 @@ class SubmissionStateSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         raise NotImplementedError
+
+
+

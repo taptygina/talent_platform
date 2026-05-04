@@ -18,7 +18,12 @@ from apps.projects.models import (
     StageStatus,
     StageSubmissionStatus,
 )
-from apps.projects.template_utils import build_template_editor_profile, render_placeholders
+from apps.projects.template_utils import (
+    build_template_editor_profile,
+    extract_template_sections_from_docx,
+    preview_template_sections_from_docx_bytes,
+    render_placeholders,
+)
 from apps.projects.serializers import (
     ProjectStageReviewSerializer,
     ProjectStageSubmissionFileSerializer,
@@ -41,10 +46,26 @@ class ProjectTemplateViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return ProjectTemplate.objects.prefetch_related("sections").select_related("created_by")
 
+    def _ensure_manage_permission(self):
+        if self.request.user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
+            raise permissions.PermissionDenied("???????????? ????.")
+
     def perform_create(self, serializer):
         if self.request.user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
-            raise permissions.PermissionDenied("Недостаточно прав.")
-        serializer.save(created_by=self.request.user)
+            raise permissions.PermissionDenied("???????????????????????? ????????.")
+
+        upload = self.request.FILES.get("template_file")
+        if not upload:
+            raise serializers.ValidationError({
+                "template_file": "??????? ????????? .docx ???? ???????.",
+            })
+        if not upload.name.lower().endswith(".docx"):
+            raise serializers.ValidationError({
+                "template_file": "?????????????? ?????? .docx ?????.",
+            })
+
+        template = serializer.save(created_by=self.request.user)
+        extract_template_sections_from_docx(template, overwrite=False)
 
     def perform_update(self, serializer):
         if self.request.user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
@@ -60,6 +81,69 @@ class ProjectTemplateViewSet(viewsets.ModelViewSet):
     def editor_profile(self, request, pk=None):
         template = self.get_object()
         return Response(build_template_editor_profile(template), status=status.HTTP_200_OK)
+    @action(detail=False, methods=["post"], permission_classes=[permissions.IsAuthenticated], url_path="preview-sections")
+    def preview_sections(self, request):
+        if request.user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
+
+        upload = request.FILES.get("template_file")
+        if not upload:
+            return Response({"detail": "Передайте .docx файл для предпросмотра."}, status=status.HTTP_400_BAD_REQUEST)
+        if not upload.name.lower().endswith(".docx"):
+            return Response({"detail": "Поддерживаются только .docx файлы."}, status=status.HTTP_400_BAD_REQUEST)
+
+        titles = preview_template_sections_from_docx_bytes(upload.read())
+        return Response({"titles": titles, "count": len(titles)}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated], url_path="soft-delete")
+    def soft_delete(self, request, pk=None):
+        template = self.get_object()
+        self._ensure_manage_permission()
+        if not template.is_active:
+            return Response({"detail": "?????? ??? ? ??????."}, status=status.HTTP_200_OK)
+        template.is_active = False
+        template.save(update_fields=["is_active"])
+        return Response({"detail": "?????? ????????? ? ?????.", "is_active": template.is_active}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated], url_path="restore")
+    def restore(self, request, pk=None):
+        template = self.get_object()
+        self._ensure_manage_permission()
+        if template.is_active:
+            return Response({"detail": "?????? ??? ???????."}, status=status.HTTP_200_OK)
+        template.is_active = True
+        template.save(update_fields=["is_active"])
+        return Response({"detail": "?????? ????????????.", "is_active": template.is_active}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["delete"], permission_classes=[permissions.IsAuthenticated], url_path="hard-delete")
+    def hard_delete(self, request, pk=None):
+        template = self.get_object()
+        self._ensure_manage_permission()
+        template.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated], url_path="extract-sections")
+    def extract_sections(self, request, pk=None):
+        template = self.get_object()
+        if request.user.role not in {UserRole.TEACHER, UserRole.CURATOR, UserRole.ADMIN}:
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
+
+        overwrite = str(request.data.get("overwrite", "true")).lower() not in {"0", "false", "no"}
+        created_count = extract_template_sections_from_docx(template, overwrite=overwrite)
+        if created_count == 0:
+            return Response(
+                {
+                    "detail": "Заголовки в файле шаблона не найдены. Проверьте стили заголовков в .docx."},
+                status=status.HTTP_200_OK,
+            )
+
+        return Response(
+            {
+                "detail": f"Разделы шаблона успешно созданы: {created_count}.",
+                "created_sections": created_count,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class ProjectTemplateSectionViewSet(viewsets.ModelViewSet):

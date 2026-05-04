@@ -3,23 +3,33 @@
 ## Что поднимается
 - `db` — PostgreSQL 16
 - `backend` — Django API (`http://localhost:8000`)
-- `frontend` — React + Nginx (`http://localhost`)
+- `frontend` — Nginx со статикой из `frontend/dist` (`http://localhost:5173`)
 
-## Быстрый старт
-1. Откройте терминал в корне проекта:
-   - `d:\4 курс\курсовая\TalentPlatform`
-2. Соберите и запустите контейнеры:
-   - `docker compose up --build`
-3. Откройте в браузере:
-   - фронтенд: `http://localhost`
-   - swagger: `http://localhost/api/docs/`
+## Быстрый старт (для защиты)
+1. В корне проекта соберите фронтенд:
+   - `cd frontend`
+   - `npm install`
+   - `npm run build`
+2. Вернитесь в корень проекта:
+   - `cd ..`
+3. (Опционально) задайте SMTP пароль:
+   - PowerShell: `$env:SMTP_PASSWORD="ВАШ_APP_ПАРОЛЬ"`
+4. Поднимите контейнеры:
+   - `docker compose up --build -d`
+5. Полностью очистите и заполните БД демо-данными:
+   - `docker compose exec backend python manage.py reset_and_seed_demo`
+
+## Полная очистка БД
+- `docker compose down -v`
 
 ## Остановка
 - `docker compose down`
 
-## Полная очистка с удалением БД
-- `docker compose down -v`
-
-## Важно
-- Данные PostgreSQL хранятся в томе `postgres_data`.
-- Загруженные файлы Django (`media`) сохраняются в `backend/media`.
+## Демо-доступы после сидирования
+- пароль для всех пользователей: `Demo12345`
+- логины:
+  - `admin`
+  - `curator`
+  - `method`
+  - `t01..t06` (преподаватели)
+  - `s01..s40` (студенты)

@@ -129,7 +129,7 @@ export function MethodistReportsPage() {
                   <li key={row.id} className="list-item">
                     <div>
                       <strong>
-                        {row.last_name} {row.first_name} ({row.username})
+                        {row.last_name} {row.first_name}
                       </strong>
                       <p>Всего проектов: {row.total_projects}</p>
                     </div>
@@ -146,7 +146,7 @@ export function MethodistReportsPage() {
                   <li key={row.id} className="list-item">
                     <div>
                       <strong>
-                        {row.last_name} {row.first_name} ({row.username})
+                        {row.last_name} {row.first_name}
                       </strong>
                       <p>Группа: {row.group_name || '-'}</p>
                     </div>
