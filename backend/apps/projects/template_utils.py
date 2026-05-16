@@ -25,6 +25,35 @@ SPECIAL_SECTION_TITLES = {
     "приложение",
 }
 
+BUILDER_VARIABLES = {
+    "НАЗВАНИЕ_ПРОЕКТА": "Название проекта",
+    "ЦЕЛЬ_ПРОЕКТА": "Цель проекта",
+    "ОПИСАНИЕ_ПРОЕКТА": "Описание проекта",
+    "ФИО_РУКОВОДИТЕЛЯ": "ФИО руководителя",
+    "ФИО_СТУДЕНТА": "ФИО студента",
+    "ГРУППА_СТУДЕНТА": "Группа студента",
+    "НАЗВАНИЕ_ЭТАПА": "Название этапа",
+    "ЗАДАНИЕ_ЭТАПА": "Задание этапа",
+    "ОТЧЕТ_ПО_ЭТАПУ": "Отчет студента",
+    "PROJECT_TITLE": "Название проекта",
+    "PROJECT_GOAL": "Цель проекта",
+    "PROJECT_DESCRIPTION": "Описание проекта",
+    "SUPERVISOR_FULL_NAME": "ФИО руководителя",
+    "STUDENT_FULL_NAME": "ФИО студента",
+    "STUDENT_GROUP": "Группа студента",
+    "STAGE_TITLE": "Название этапа",
+    "STAGE_TASK": "Задание этапа",
+    "STAGE_REPORT": "Отчет студента",
+}
+
+BUILDER_REPEAT_SOURCES = {"participants", "stages"}
+BUILDER_CONDITION_KEYS = {
+    "has_goal",
+    "has_description",
+    "has_participants",
+    "has_stages",
+}
+
 
 def _full_name(user: User | None) -> str:
     if not user:
@@ -62,6 +91,146 @@ def render_placeholders(
         return mapping.get(key, match.group(0))
 
     return PLACEHOLDER_RE.sub(replace_match, source)
+
+
+def default_builder_schema() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "blocks": [
+            {"id": "heading-main", "type": "heading", "level": 1, "text": "{{НАЗВАНИЕ_ПРОЕКТА}}"},
+            {"id": "paragraph-goal", "type": "paragraph", "text": "Цель проекта: {{ЦЕЛЬ_ПРОЕКТА}}"},
+            {
+                "id": "repeat-stages",
+                "type": "repeat",
+                "source": "stages",
+                "children": [
+                    {"id": "stage-heading", "type": "heading", "level": 2, "text": "{{НАЗВАНИЕ_ЭТАПА}}"},
+                    {"id": "stage-task", "type": "paragraph", "text": "{{ЗАДАНИЕ_ЭТАПА}}"},
+                ],
+            },
+        ],
+    }
+
+
+def _clean_block(block: dict[str, Any], depth: int = 0) -> dict[str, Any] | None:
+    if depth > 6 or not isinstance(block, dict):
+        return None
+    block_type = str(block.get("type") or "").strip()
+    if block_type not in {"heading", "paragraph", "variable", "condition", "repeat", "page_break"}:
+        return None
+    clean = {"id": str(block.get("id") or "").strip() or f"block-{depth}"}
+    clean["type"] = block_type
+    if block_type in {"heading", "paragraph"}:
+        clean["text"] = str(block.get("text") or "")
+    if block_type == "heading":
+        try:
+            clean["level"] = max(1, min(3, int(block.get("level") or 1)))
+        except Exception:
+            clean["level"] = 1
+    if block_type == "variable":
+        key = str(block.get("key") or "НАЗВАНИЕ_ПРОЕКТА").strip().upper()
+        clean["key"] = key if key in BUILDER_VARIABLES else "НАЗВАНИЕ_ПРОЕКТА"
+    if block_type == "condition":
+        key = str(block.get("key") or "has_goal").strip()
+        clean["key"] = key if key in BUILDER_CONDITION_KEYS else "has_goal"
+        clean["children"] = [item for child in block.get("children") or [] if (item := _clean_block(child, depth + 1))]
+    if block_type == "repeat":
+        source = str(block.get("source") or "stages").strip()
+        clean["source"] = source if source in BUILDER_REPEAT_SOURCES else "stages"
+        clean["children"] = [item for child in block.get("children") or [] if (item := _clean_block(child, depth + 1))]
+    return clean
+
+
+def normalize_builder_schema(value: Any) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    blocks = [item for child in raw.get("blocks") or [] if (item := _clean_block(child))]
+    return {"version": 1, "blocks": blocks}
+
+
+def _builder_base_context(project: Project | None = None, student: User | None = None, stage: Any = None) -> dict[str, str]:
+    supervisor = getattr(project, "supervisor", None) if project else None
+    context = {
+        "PROJECT_TITLE": getattr(project, "title", "") if project else "Цифровой паспорт компетенций",
+        "PROJECT_GOAL": getattr(project, "goal", "") if project else "Сократить время подбора участников под проектные задачи.",
+        "PROJECT_DESCRIPTION": getattr(project, "description", "") if project else "Единый профиль участника с навыками и проектным опытом.",
+        "SUPERVISOR_FULL_NAME": _full_name(supervisor) if supervisor else "Петров Иван Алексеевич",
+        "STUDENT_FULL_NAME": _full_name(student) if student else "Соколова Анна Ильинична",
+        "STUDENT_GROUP": getattr(student, "group_name", "") if student else "ИС-222б",
+        "STAGE_TITLE": getattr(stage, "title", "") if stage else "Этап 1. Постановка задачи",
+        "STAGE_TASK": getattr(stage, "task_text", "") if stage else "Собрать требования и согласовать критерии результата.",
+        "STAGE_REPORT": getattr(stage, "student_report", "") if stage else "Материалы этапа подготовлены и загружены.",
+    }
+    context.update({
+        "НАЗВАНИЕ_ПРОЕКТА": context["PROJECT_TITLE"],
+        "ЦЕЛЬ_ПРОЕКТА": context["PROJECT_GOAL"],
+        "ОПИСАНИЕ_ПРОЕКТА": context["PROJECT_DESCRIPTION"],
+        "ФИО_РУКОВОДИТЕЛЯ": context["SUPERVISOR_FULL_NAME"],
+        "ФИО_СТУДЕНТА": context["STUDENT_FULL_NAME"],
+        "ГРУППА_СТУДЕНТА": context["STUDENT_GROUP"],
+        "НАЗВАНИЕ_ЭТАПА": context["STAGE_TITLE"],
+        "ЗАДАНИЕ_ЭТАПА": context["STAGE_TASK"],
+        "ОТЧЕТ_ПО_ЭТАПУ": context["STAGE_REPORT"],
+    })
+    return context
+
+
+def _render_builder_text(text: str, context: dict[str, str]) -> str:
+    def replace(match: re.Match[str]) -> str:
+        return context.get((match.group(1) or "").strip().upper(), match.group(0))
+
+    return PLACEHOLDER_RE.sub(replace, text or "")
+
+
+def _condition_value(key: str, *, project: Project | None, participants: list[User], stages: list[Any]) -> bool:
+    return {
+        "has_goal": bool(getattr(project, "goal", "") if project else True),
+        "has_description": bool(getattr(project, "description", "") if project else True),
+        "has_participants": bool(participants),
+        "has_stages": bool(stages),
+    }.get(key, False)
+
+
+def render_builder_blocks(schema: dict[str, Any], *, project: Project | None = None) -> list[dict[str, Any]]:
+    normalized = normalize_builder_schema(schema)
+    participants = list(project.participants.all()) if project else []
+    stages = list(project.stages.order_by("order", "id")) if project else []
+    if not participants:
+        participants = [None]
+    if not stages:
+        stages = [None]
+
+    rendered: list[dict[str, Any]] = []
+
+    def walk(blocks: list[dict[str, Any]], *, student: User | None = None, stage: Any = None):
+        for block in blocks:
+            block_type = block["type"]
+            if block_type in {"heading", "paragraph"}:
+                rendered.append({
+                    "type": block_type,
+                    "level": block.get("level", 1),
+                    "text": _render_builder_text(block.get("text", ""), _builder_base_context(project, student, stage)),
+                })
+            elif block_type == "variable":
+                rendered.append({
+                    "type": "paragraph",
+                    "level": 1,
+                    "text": _builder_base_context(project, student, stage).get(block.get("key", ""), ""),
+                })
+            elif block_type == "page_break":
+                rendered.append({"type": "page_break"})
+            elif block_type == "condition":
+                if _condition_value(block.get("key", ""), project=project, participants=participants if participants != [None] else [], stages=stages if stages != [None] else []):
+                    walk(block.get("children", []), student=student, stage=stage)
+            elif block_type == "repeat":
+                if block.get("source") == "participants":
+                    for item in participants:
+                        walk(block.get("children", []), student=item, stage=stage)
+                else:
+                    for item in stages:
+                        walk(block.get("children", []), student=student, stage=item)
+
+    walk(normalized["blocks"])
+    return rendered
 
 
 def _iter_doc_strings(doc: Any):

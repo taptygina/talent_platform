@@ -17,6 +17,17 @@ export function FileDropZone({
     onFileSelect(selected)
   }
 
+  const clearFile = (event) => {
+    event.stopPropagation()
+    if (inputRef.current) inputRef.current.value = ''
+    onFileSelect(null)
+  }
+
+  const replaceFile = (event) => {
+    event.stopPropagation()
+    pickFile()
+  }
+
   const onDrop = (event) => {
     event.preventDefault()
     setDragActive(false)
@@ -27,7 +38,11 @@ export function FileDropZone({
     <div className="dropzone-wrapper">
       {label ? <p className="dropzone-label">{label}</p> : null}
       <div
-        className={dragActive ? 'dropzone dropzone-active' : 'dropzone'}
+        className={[
+          'dropzone',
+          dragActive ? 'dropzone-active' : '',
+          file ? 'dropzone-selected' : '',
+        ].filter(Boolean).join(' ')}
         onDragOver={(event) => {
           event.preventDefault()
           setDragActive(true)
@@ -46,7 +61,19 @@ export function FileDropZone({
       >
         <p>Перетащите файл сюда или нажмите для выбора</p>
         {hint ? <p className="muted-text">{hint}</p> : null}
-        {file ? <p className="dropzone-file">Выбран файл: {file.name}</p> : null}
+        {file ? (
+          <div className="dropzone-file-row">
+            <span className="dropzone-file">Выбран файл: {file.name}</span>
+            <span className="dropzone-file-actions">
+              <button type="button" className="button-ghost" onClick={replaceFile}>
+                Заменить
+              </button>
+              <button type="button" className="button-danger" onClick={clearFile}>
+                Убрать
+              </button>
+            </span>
+          </div>
+        ) : null}
       </div>
       <input
         ref={inputRef}

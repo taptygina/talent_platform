@@ -12,7 +12,7 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.projects.template_utils import render_placeholders
+from apps.projects.template_utils import render_builder_blocks, render_placeholders
 
 from apps.projects.models import (
     Project,
@@ -526,9 +526,28 @@ class ProjectExportNirsDocxView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if project.template.builder_schema:
+            doc = Document()
+            for block in render_builder_blocks(project.template.builder_schema, project=project):
+                if block["type"] == "page_break":
+                    doc.add_page_break()
+                    continue
+                if block["type"] == "heading":
+                    doc.add_heading(block.get("text", ""), level=block.get("level", 1))
+                else:
+                    doc.add_paragraph(block.get("text", ""))
+            output = BytesIO()
+            doc.save(output)
+            response = HttpResponse(
+                output.getvalue(),
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+            response["Content-Disposition"] = f'attachment; filename="nirs_project_{project.id}.docx"'
+            return response
+
         if not getattr(project.template, "template_file", None):
             return Response(
-                {"detail": "У выбранного шаблона не загружен .docx файл. Загрузите файл шаблона и повторите экспорт."},
+                {"detail": "У выбранного шаблона нет схемы конструктора и не загружен .docx файл."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

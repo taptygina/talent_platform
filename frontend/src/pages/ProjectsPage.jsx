@@ -2,6 +2,8 @@
 import { Link, useSearchParams } from 'react-router-dom'
 
 import { apiClient } from '../api/client'
+import { Icon } from '../components/Icon'
+import { CardGridSkeleton, EmptyState, InlineError } from '../components/InterfaceState'
 import { formatProjectStatus, formatProjectType } from '../utils/labels'
 
 const typeOptions = [
@@ -22,12 +24,12 @@ const statusOptions = [
   { value: 'cancelled', label: 'Отменен' },
 ]
 
-const projectTypeEmoji = {
-  contest: '🏆',
-  olympiad: '🎯',
-  coursework: '📚',
-  diploma: '🎓',
-  other: '🧩',
+const projectTypeIcon = {
+  contest: 'star',
+  olympiad: 'rocket',
+  coursework: 'book',
+  diploma: 'briefcase',
+  other: 'grid',
 }
 
 const statusClassByValue = {
@@ -49,10 +51,37 @@ function formatDate(value) {
   }).format(date)
 }
 
+function getDeadlineMeta(project) {
+  const rawDate = project.end_date || project.start_date
+  if (!rawDate) return { label: 'Срок не задан', tone: 'neutral' }
+  const target = new Date(rawDate)
+  if (Number.isNaN(target.getTime())) return { label: 'Срок не задан', tone: 'neutral' }
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  target.setHours(0, 0, 0, 0)
+  const days = Math.ceil((target - today) / 86400000)
+  if (project.status === 'done') return { label: `Завершен к ${formatDate(rawDate)}`, tone: 'good' }
+  if (project.status === 'cancelled') return { label: `Отменен, срок был ${formatDate(rawDate)}`, tone: 'neutral' }
+  if (days < 0) return { label: `Просрочка ${Math.abs(days)} дн.`, tone: 'danger' }
+  if (days <= 7) return { label: `До срока ${days} дн.`, tone: 'warning' }
+  return { label: `Срок: ${formatDate(rawDate)}`, tone: 'neutral' }
+}
+
+function getNextProjectAction(project) {
+  if (project.status === 'planned') return 'Запустить работу'
+  if (project.status === 'in_progress') return 'Проверить ближайший этап'
+  if (project.status === 'review') return 'Перейти к проверке'
+  if (project.status === 'done' && !project.is_published) return 'Подготовить публикацию'
+  if (project.status === 'done') return 'Посмотреть результат'
+  if (project.status === 'cancelled') return 'Открыть архивную карточку'
+  return 'Открыть проект'
+}
+
 export function ProjectsPage() {
   const [projects, setProjects] = useState([])
   const [count, setCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [teams, setTeams] = useState([])
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -84,6 +113,7 @@ export function ProjectsPage() {
     let ignore = false
     const loadProjects = async () => {
       setLoading(true)
+      setError('')
       try {
         const { data } = await apiClient.get('/projects/', {
           params: {
@@ -100,6 +130,12 @@ export function ProjectsPage() {
         if (!ignore) {
           setProjects(data.results ?? [])
           setCount(data.count ?? 0)
+        }
+      } catch {
+        if (!ignore) {
+          setProjects([])
+          setCount(0)
+          setError('Проекты не загрузились. Проверьте фильтры или повторите запрос.')
         }
       } finally {
         if (!ignore) setLoading(false)
@@ -162,115 +198,160 @@ export function ProjectsPage() {
           </div>
         </div>
 
-        <div className="projects-filter-grid" style={{ marginTop: '16px' }}>
-          <label>
-            Поиск
-            <input
-              placeholder="Название, описание, руководитель"
-              value={search}
-              onChange={(e) => updateParams({ search: e.target.value })}
-            />
-          </label>
+        <details className="filters-collapse" open>
+          <summary>Фильтры и параметры поиска</summary>
+          <div className="filters-collapse-body">
+            <div className="projects-filter-grid">
+              <label>
+                Поиск
+                <input
+                  placeholder="Название, описание, руководитель"
+                  value={search}
+                  onChange={(e) => updateParams({ search: e.target.value })}
+                />
+              </label>
 
-          <label>
-            Статус
-            <select value={status} onChange={(event) => updateParams({ status: event.target.value })}>
-              {statusOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              <label>
+                Статус
+                <select value={status} onChange={(event) => updateParams({ status: event.target.value })}>
+                  {statusOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label>
-            Тип проекта
-            <select value={type} onChange={(event) => updateParams({ type: event.target.value })}>
-              {typeOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              <label>
+                Тип проекта
+                <select value={type} onChange={(event) => updateParams({ type: event.target.value })}>
+                  {typeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label>
-            Команда
-            <select value={team} onChange={(event) => updateParams({ team: event.target.value })}>
-              <option value="">Все команды</option>
-              {teams.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.name}
-                </option>
-              ))}
-            </select>
-          </label>
+              <label>
+                Команда
+                <select value={team} onChange={(event) => updateParams({ team: event.target.value })}>
+                  <option value="">Все команды</option>
+                  {teams.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label>
-            Начало проекта: с
-            <input type="date" value={startDateFrom} onChange={(event) => updateParams({ start_date_from: event.target.value })} />
-          </label>
+              <label>
+                Начало проекта: с
+                <input type="date" value={startDateFrom} onChange={(event) => updateParams({ start_date_from: event.target.value })} />
+              </label>
 
-          <label>
-            Начало проекта: по
-            <input type="date" value={startDateTo} onChange={(event) => updateParams({ start_date_to: event.target.value })} />
-          </label>
-        </div>
+              <label>
+                Начало проекта: по
+                <input type="date" value={startDateTo} onChange={(event) => updateParams({ start_date_to: event.target.value })} />
+              </label>
+            </div>
 
-        <div className="toolbar" style={{ marginTop: '16px' }}>
-          <div className="toolbar-actions">
-            <button type="button" onClick={resetFilters}>
-              Сбросить фильтры
-            </button>
+            <div className="toolbar">
+              <div className="toolbar-actions">
+                <button type="button" className="button-ghost" onClick={resetFilters}>
+                  Сбросить фильтры
+                </button>
+              </div>
+              <p className="muted-text">
+                Всего проектов: <strong>{count}</strong>
+              </p>
+            </div>
           </div>
-          <p className="muted-text">
-            Всего проектов: <strong>{count}</strong>
-          </p>
-        </div>
+        </details>
       </section>
 
-      <section className="projects-cards-grid" style={{ marginTop: '24px' }}>
-        {projects.map((project) => (
-          <article key={project.id} className="panel project-tile">
-            <div className="project-tile-head">
-              <h3 className="project-tile-title">
-                <span className="project-type-emoji" aria-hidden="true">
-                  {projectTypeEmoji[project.type] || projectTypeEmoji.other}
-                </span>{' '}
-                {project.title}
-              </h3>
-              <span className={statusClassByValue[project.status] || 'status-chip'}>
-                {formatProjectStatus(project.status)}
-              </span>
-            </div>
+      {error ? (
+        <InlineError
+          title="Не удалось загрузить проекты"
+          description={error}
+          onRetry={() => updateParams({})}
+        />
+      ) : null}
 
-            <div className="project-meta-rows">
-              <p>
-                <span className="muted-text">Тип:</span> <strong>{formatProjectType(project.type)}</strong>
-              </p>
-              <p>
-                <span className="muted-text">Команда:</span> <strong>{project.team_name || '-'}</strong>
-              </p>
-              <p>
-                <span className="muted-text">Публикация:</span>{' '}
-                <strong>{project.is_published ? 'Опубликован' : 'Не опубликован'}</strong>
-              </p>
-              <p>
-                <span className="muted-text">Дата создания:</span> <strong>{formatDate(project.created_at)}</strong>
-              </p>
-            </div>
+      {loading ? <CardGridSkeleton count={6} /> : null}
 
-            <div className="toolbar-actions" style={{ marginTop: '8px' }}>
-              <Link className="button-link" to={`/projects/${project.id}`}>
-                Подробнее
+      {!loading && !error && projects.length ? (
+        <section className="projects-cards-grid" style={{ marginTop: '24px' }}>
+          {projects.map((project) => {
+          const deadline = getDeadlineMeta(project)
+          return (
+            <article key={project.id} className="panel project-tile">
+              <div className="project-card-priority">
+                <div className="project-tile-head">
+                  <h3 className="project-tile-title">
+                    <span className="project-type-icon" aria-hidden="true">
+                      <Icon name={projectTypeIcon[project.type] || projectTypeIcon.other} size={20} />
+                    </span>
+                    {project.title}
+                  </h3>
+                  <span className={statusClassByValue[project.status] || 'status-chip'}>
+                    {formatProjectStatus(project.status)}
+                  </span>
+                </div>
+
+                <div className={`critical-banner critical-${deadline.tone}`}>
+                  <span>{deadline.label}</span>
+                </div>
+              </div>
+
+              <div className="project-card-answer-grid">
+                <div>
+                  <span className="meta-label">Ответственный</span>
+                  <strong>{project.supervisor_name || '-'}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">Команда</span>
+                  <strong>{project.team_name || project.academic_group_name || '-'}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">Тип</span>
+                  <strong>{formatProjectType(project.type)}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">Публикация</span>
+                  <strong>{project.is_published ? 'Опубликован' : 'Не опубликован'}</strong>
+                </div>
+              </div>
+
+              <div className="next-action-row">
+                <span>{getNextProjectAction(project)}</span>
+                <Link className="button-link" to={`/projects/${project.id}`}>
+                  Подробнее
+                </Link>
+              </div>
+            </article>
+          )
+          })}
+        </section>
+      ) : null}
+
+      {!loading && !error && projects.length === 0 ? (
+        <EmptyState
+          icon="briefcase"
+          title="Проекты не найдены"
+          description="Это значит, что под выбранные фильтры ничего не подходит. Сбросьте фильтры или создайте новый проект."
+          action={
+            <>
+              <button type="button" className="button-ghost" onClick={resetFilters}>
+                Сбросить фильтры
+              </button>
+              <Link className="button-link" to="/projects/new">
+                Создать проект
               </Link>
-            </div>
-          </article>
-        ))}
-      </section>
-
-      {loading ? <section className="panel" style={{ marginTop: '16px' }}>Загрузка проектов...</section> : null}
-      {!loading && projects.length === 0 ? <section className="panel" style={{ marginTop: '16px' }}>Проекты не найдены.</section> : null}
+            </>
+          }
+        />
+      ) : null}
 
       <section className="panel" style={{ marginTop: '16px' }}>
         <div className="pager">

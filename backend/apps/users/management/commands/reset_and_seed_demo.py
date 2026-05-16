@@ -47,9 +47,9 @@ class Command(BaseCommand):
             username="admin",
             password=default_password,
             role=UserRole.ADMIN,
-            first_name="??????",
-            last_name="????????",
-            middle_name="?????????",
+            first_name="Андрей",
+            last_name="Иванов",
+            middle_name="Сергеевич",
             email="admin@talent-platform.local",
             phone="+79001000001",
             is_verified=True,
@@ -58,9 +58,9 @@ class Command(BaseCommand):
             username="curator",
             password=default_password,
             role=UserRole.CURATOR,
-            first_name="?????",
-            last_name="??????????",
-            middle_name="????????",
+            first_name="Ольга",
+            last_name="Смирнова",
+            middle_name="Викторовна",
             email="curator@talent-platform.local",
             phone="+79001000002",
             is_verified=True,
@@ -69,9 +69,9 @@ class Command(BaseCommand):
             username="method",
             password=default_password,
             role=UserRole.METHODIST,
-            first_name="?????",
-            last_name="???????????",
-            middle_name="????????",
+            first_name="Ирина",
+            last_name="Коваленко",
+            middle_name="Петровна",
             email="methodist@talent-platform.local",
             phone="+79001000003",
             is_verified=True,
@@ -165,19 +165,31 @@ class Command(BaseCommand):
 
         self.stdout.write("Creating platform settings...")
         SystemSetting.objects.create(
-            platform_name="Инженерия проектов",
+            platform_name="Платформа талантов и проектов",
             max_team_members=12,
             upcoming_deadline_days=10,
             allow_public_feed=True,
         )
 
         self.stdout.write("Creating teams...")
+        team_specs = [
+            ("Лаборатория цифрового производства", TeamKind.CREATIVE, ""),
+            ("Команда промышленной аналитики", TeamKind.CREATIVE, ""),
+            ("Проектная группа умной логистики", TeamKind.CREATIVE, ""),
+            ("Студия образовательных сервисов", TeamKind.CREATIVE, ""),
+            ("Команда карьерной навигации", TeamKind.CREATIVE, ""),
+            ("ИС-222б", TeamKind.ACADEMIC, "ИС-222б"),
+            ("ИС-223", TeamKind.ACADEMIC, "ИС-223"),
+            ("ИВТ-221", TeamKind.ACADEMIC, "ИВТ-221"),
+            ("ПМИ-224", TeamKind.ACADEMIC, "ПМИ-224"),
+            ("ПИН-225", TeamKind.ACADEMIC, "ПИН-225"),
+        ]
         teams: list[Team] = []
-        for idx in range(1, 11):
+        for idx, (name, kind, group_name) in enumerate(team_specs, start=1):
             team = Team.objects.create(
-                name=f"Команда {idx:02d}",
-                kind=TeamKind.CREATIVE if idx <= 5 else TeamKind.ACADEMIC,
-                group_name=groups[(idx - 1) % len(groups)] if idx > 5 else "",
+                name=name,
+                kind=kind,
+                group_name=group_name,
                 supervisor=teachers[(idx - 1) % len(teachers)],
             )
             teams.append(team)
@@ -185,13 +197,13 @@ class Command(BaseCommand):
 
         self.stdout.write("Creating templates and sections...")
         template_specs = [
-            ("Шаблон НИРС", ProjectType.COURSEWORK),
-            ("Шаблон диплома", ProjectType.DIPLOMA),
-            ("Шаблон хакатона", ProjectType.CONTEST),
-            ("Шаблон олимпиады", ProjectType.OLYMPIAD),
-            ("Универсальный шаблон", ProjectType.OTHER),
+            ("Шаблон исследовательского проекта", ProjectType.COURSEWORK),
+            ("Шаблон выпускной квалификационной работы", ProjectType.DIPLOMA),
+            ("Шаблон индустриального кейса", ProjectType.CONTEST),
+            ("Шаблон проектной олимпиады", ProjectType.OLYMPIAD),
+            ("Шаблон инициативы кластера", ProjectType.OTHER),
         ]
-        section_titles = ["Введение", "Аналитика", "Проектирование", "Реализация", "Выводы"]
+        section_titles = ["Постановка задачи", "Анализ предметной области", "Проектирование решения", "Реализация", "Оценка результата"]
 
         templates: list[ProjectTemplate] = []
         for idx, (name, project_type) in enumerate(template_specs, start=1):
@@ -213,16 +225,40 @@ class Command(BaseCommand):
                 )
 
         project_titles = [
-            "Система мониторинга учебных дедлайнов",
-            "Платформа сопровождения НИРС",
-            "Сервис визуализации карьерных треков",
-            "Веб-приложение распределения ролей в командах",
-            "Модуль оценки проектных компетенций",
-            "Интерактивная карта исследовательских задач",
-            "Инструмент контроля качества этапов",
-            "Портал публикации студенческих кейсов",
-            "Трекер проектных рисков",
+            "Цифровой паспорт компетенций участников кластера",
+            "Система подбора студентов под индустриальные кейсы",
+            "Панель мониторинга загрузки проектных команд",
+            "Сервис согласования наставников и проектных ролей",
+            "Модуль оценки готовности проекта к демонстрации",
+            "Карта исследовательских запросов предприятий-партнеров",
+            "Система контроля этапов выпускных проектов",
+            "Портал лучших практик учебно-производственных кластеров",
+            "Трекер рисков для междисциплинарных команд",
             "Сервис проверки полноты проектной документации",
+        ]
+        project_descriptions = [
+            "Единый профиль участника с навыками, проектным опытом и рекомендациями для кураторов.",
+            "Инструмент сопоставления требований предприятий с компетенциями студентов и их занятостью.",
+            "Аналитическая панель для преподавателей и кураторов с балансом задач, сроков и нагрузки.",
+            "Сервис для выбора наставника, распределения ролей и фиксации зон ответственности.",
+            "Модуль чек-листов и экспертной оценки перед публичной защитой решения.",
+            "Каталог реальных задач партнеров с фильтрацией по отрасли, технологии и уровню сложности.",
+            "Рабочее пространство для отслеживания этапов, замечаний и готовности ВКР.",
+            "Публичная витрина реализованных решений, кейсов и результатов команд.",
+            "Инструмент регистрации рисков, владельцев, мер реагирования и контрольных точек.",
+            "Проверка состава документов, статусов согласования и требований к оформлению.",
+        ]
+        project_goals = [
+            "Сократить время поиска подходящих участников для новых проектов.",
+            "Повысить точность распределения студентов по задачам предприятий.",
+            "Сделать загрузку команд прозрачной для кураторов и руководителей.",
+            "Снизить число конфликтов ролей и ускорить старт проектной работы.",
+            "Повысить качество подготовки решений к промежуточной и итоговой защите.",
+            "Собрать единое окно входа для запросов индустриальных партнеров.",
+            "Снизить риск просрочек и потери замечаний по выпускным проектам.",
+            "Расширить обмен успешными практиками между учебными и производственными площадками.",
+            "Научить команды заранее видеть угрозы срокам и качеству результата.",
+            "Уменьшить количество возвратов документов из-за неполного комплекта.",
         ]
         project_statuses = [
             ProjectStatus.PLANNED,
@@ -243,8 +279,8 @@ class Command(BaseCommand):
 
             project = Project.objects.create(
                 title=title,
-                description=f"{title}. Основной учебно-исследовательский проект.",
-                goal=f"Достичь измеримого результата по теме «{title.lower()}».",
+                description=project_descriptions[idx - 1],
+                goal=project_goals[idx - 1],
                 type=template.project_type,
                 status=project_statuses[(idx - 1) % len(project_statuses)],
                 start_date=start_date,
@@ -268,15 +304,15 @@ class Command(BaseCommand):
                     project=project,
                     template_section=section,
                     title=f"Этап {order}. {section.title}",
-                    description=f"Выполнить этап «{section.title}» для проекта «{title}».",
+                    description=f"Подготовить результат этапа «{section.title}» для проекта «{title}».",
                     order=order,
                     deadline=start_date + timedelta(days=order * 7),
                     task_text=section.default_task,
                     status=[StageStatus.OPEN, StageStatus.SUBMITTED, StageStatus.CHANGES_REQUESTED, StageStatus.APPROVED][
                         (idx + order) % 4
                     ],
-                    student_report="Отчет загружен в систему.",
-                    teacher_feedback="Комментарий преподавателя по этапу.",
+                    student_report="Команда загрузила материалы этапа и отметила выполненные задачи.",
+                    teacher_feedback="Проверены полнота материалов, логика решения и соответствие требованиям этапа.",
                     updated_by=supervisor,
                 )
                 stages.append(stage)
@@ -304,7 +340,7 @@ class Command(BaseCommand):
                     teacher=supervisor,
                     decision=StageReviewDecision.APPROVED if order % 2 == 0 else StageReviewDecision.NEEDS_CHANGES,
                     score=80 + (idx + order) % 21,
-                    comment="Проверка выполнена, см. рекомендации в комментариях.",
+                    comment="Материалы проверены. Уточните метрики результата и добавьте ссылки на подтверждающие артефакты.",
                 )
 
             ProjectDeadlineChangeLog.objects.create(
@@ -313,14 +349,14 @@ class Command(BaseCommand):
                 new_start_date=start_date,
                 old_end_date=end_date - timedelta(days=3),
                 new_end_date=end_date,
-                reason="Уточнение календарного графика проекта",
+                reason="Сроки скорректированы после согласования с индустриальным партнером",
                 changed_by=curator,
             )
             StageDeadlineChangeLog.objects.create(
                 stage=stages[0],
                 old_deadline=stages[0].deadline - timedelta(days=2),
                 new_deadline=stages[0].deadline,
-                reason="Согласование сроков с преподавателем",
+                reason="Этап перенесен после уточнения требований к прототипу",
                 changed_by=supervisor,
             )
 
@@ -329,7 +365,11 @@ class Command(BaseCommand):
                     project=project,
                     stage=stages[(comment_idx - 1) % len(stages)] if comment_idx % 2 == 0 else None,
                     author=author,
-                    text=f"Комментарий {comment_idx} по проекту «{title}».",
+                    text=[
+                        f"Добавили исходные требования и список заинтересованных сторон по проекту «{title}».",
+                        f"Нужна проверка схемы данных и показателей результата для проекта «{title}».",
+                        f"После ревью обновим план демонстрации проекта «{title}».",
+                    ][comment_idx - 1],
                     is_approved=True,
                 )
 
@@ -340,7 +380,7 @@ class Command(BaseCommand):
                 project=project,
                 student=participants[0],
                 teacher=teachers[idx % len(teachers)],
-                message=f"Просьба подключиться к проекту «{title}».",
+                message=f"Просим подключиться как наставника по проекту «{title}» и помочь с экспертной оценкой решения.",
                 status=[SupervisorInviteStatus.PENDING, SupervisorInviteStatus.ACCEPTED, SupervisorInviteStatus.DECLINED][
                     idx % 3
                 ],
@@ -361,8 +401,8 @@ class Command(BaseCommand):
                 project=project,
                 stage=stage,
                 type=notif_type,
-                title=f"Уведомление: {project.title}",
-                message=f"Событие «{notif_type}» по проекту «{project.title}».",
+                title=f"Обновление по проекту: {project.title}",
+                message=f"По проекту «{project.title}» зарегистрировано событие «{notif_type}». Проверьте текущий статус этапа.",
                 is_read=idx % 4 == 0,
             )
 

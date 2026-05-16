@@ -39,12 +39,11 @@ const submissionStatusLabels = {
   approved: 'Принято',
 }
 
-const submissionStatusColors = {
-  draft: '#b08900',
-  submitted: '#2059b8',
-  needs_changes: '#c0392b',
-  approved: '#2b8f5f',
-  none: '#7d8797',
+const stageStatusClassByValue = {
+  open: 'status-chip status-planned',
+  submitted: 'status-chip status-review',
+  changes_requested: 'status-chip status-cancelled',
+  approved: 'status-chip status-done',
 }
 
 function extractApiErrorMessage(error, fallbackMessage) {
@@ -83,6 +82,56 @@ async function extractBlobErrorMessage(error, fallbackMessage) {
   }
 
   return extractApiErrorMessage(error, fallbackMessage)
+}
+
+function formatDate(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date)
+}
+
+function formatDateTime(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
+function getStageProgress(stage) {
+  if (stage.status === 'approved') return 100
+  if (stage.status === 'submitted') return 70
+  if (stage.status === 'changes_requested') return 45
+  const submissions = stage.submissions || []
+  if (submissions.some((item) => item.status === 'approved')) return 100
+  if (submissions.some((item) => item.status === 'submitted')) return 70
+  if (submissions.some((item) => item.status === 'needs_changes')) return 45
+  if (submissions.some((item) => item.status === 'draft')) return 25
+  return 10
+}
+
+function getStageDeadlineMeta(stage) {
+  if (!stage.deadline) return { label: 'Срок не задан', tone: 'neutral' }
+  if (stage.status === 'approved') return { label: `Принят к ${formatDate(stage.deadline)}`, tone: 'good' }
+  const target = new Date(stage.deadline)
+  if (Number.isNaN(target.getTime())) return { label: 'Срок не задан', tone: 'neutral' }
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  target.setHours(0, 0, 0, 0)
+  const days = Math.ceil((target - today) / 86400000)
+  if (days < 0) return { label: `Просрочен на ${Math.abs(days)} дн.`, tone: 'danger' }
+  if (days <= 3) return { label: `До дедлайна ${days} дн.`, tone: 'warning' }
+  return { label: `Дедлайн ${formatDate(stage.deadline)}`, tone: 'neutral' }
 }
 
 
@@ -141,7 +190,6 @@ export function ProjectDetailPage() {
   const [stageMaterialFiles, setStageMaterialFiles] = useState({})
   const [submissionFiles, setSubmissionFiles] = useState({})
   const [submissionLoading, setSubmissionLoading] = useState(false)
-  const [onlyWithDebts, setOnlyWithDebts] = useState(false)
   const [editorProfile, setEditorProfile] = useState(null)
   const [toastState, setToastState] = useState({
     message: '',
@@ -201,20 +249,60 @@ export function ProjectDetailPage() {
 
   const formatSubmissionStatus = (value) => submissionStatusLabels[value] || value || '-'
 
+  const getNextStageAction = (stage) => {
+    if (canManageStages && stage.status === 'submitted') return 'Проверить сдачи'
+    if (canManageStages && stage.status === 'changes_requested') return 'Посмотреть доработки'
+    if (canManageStages) return 'Открыть этап'
+    if (user?.role === 'student' && isParticipant) {
+      const submission = getMySubmission(stage)
+      if (!submission) return 'Начать работу'
+      if (submission.status === 'draft' || submission.status === 'needs_changes') return 'Отправить на проверку'
+      if (submission.status === 'submitted') return 'Ожидать проверки'
+      if (submission.status === 'approved') return 'Этап принят'
+    }
+    return 'Посмотреть детали'
+  }
+
   const getSubmissionForStudent = (stage, studentId) =>
     (stage?.submissions || []).find((submission) => submission.student === studentId)
 
-  const hasDebtByStudent = (studentId) =>
-    (project?.stages || []).some((stage) => {
-      const submission = getSubmissionForStudent(stage, studentId)
-      return !submission || submission.status !== 'approved'
+  const projectCompletionSummary = useMemo(() => {
+    const stages = project?.stages || []
+    const totals = {
+      students: matrixStudents.length,
+      stages: stages.length,
+      cells: matrixStudents.length * stages.length,
+      approved: 0,
+      submitted: 0,
+      needsChanges: 0,
+      draft: 0,
+      missing: 0,
+      progress: 0,
+      nextProblemStage: null,
+    }
+
+    matrixStudents.forEach((student) => {
+      stages.forEach((stage) => {
+        const submission = getSubmissionForStudent(stage, student.id)
+        if (!submission) totals.missing += 1
+        else if (submission.status === 'approved') totals.approved += 1
+        else if (submission.status === 'submitted') totals.submitted += 1
+        else if (submission.status === 'needs_changes') totals.needsChanges += 1
+        else totals.draft += 1
+      })
     })
 
-  const matrixStudentsFiltered = useMemo(() => {
-    if (!onlyWithDebts) return matrixStudents
-    return matrixStudents.filter((student) => hasDebtByStudent(student.id))
+    totals.progress = totals.cells ? Math.round((totals.approved / totals.cells) * 100) : 0
+    totals.nextProblemStage = stages.find((stage) =>
+      matrixStudents.some((student) => {
+        const submission = getSubmissionForStudent(stage, student.id)
+        return !submission || submission.status !== 'approved'
+      }),
+    )
+
+    return totals
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onlyWithDebts, matrixStudents, project?.stages])
+  }, [matrixStudents, project?.stages])
 
   const projectLevelComments = useMemo(
     () => comments.filter((comment) => !comment.stage),
@@ -974,6 +1062,9 @@ export function ProjectDetailPage() {
             <a className="button-link" href="#project-stages">
               Этапы
             </a>
+            <a className="button-link" href="#project-comments">
+              Комментарии
+            </a>
             <a className="button-link" href="#project-participants">
               Участники
             </a>
@@ -1030,77 +1121,130 @@ export function ProjectDetailPage() {
           {error ? <p className="error">{error}</p> : null}
 
           {canManageStages && matrixStudents.length ? (
-            <div style={{ overflowX: 'auto', marginBottom: '14px' }}>
-              <h3>Матрица этапов по студентам</h3>
-              <label className="checkbox-row" style={{ marginBottom: '8px' }}>
-                <input
-                  type="checkbox"
-                  checked={onlyWithDebts}
-                  onChange={(event) => setOnlyWithDebts(event.target.checked)}
-                />
-                <span>Показать только студентов с долгами по этапам</span>
-              </label>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #d5dbe8' }}>Этап</th>
-                    {matrixStudentsFiltered.map((student) => (
-                      <th key={student.id} style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #d5dbe8' }}>
-                        {student.last_name || student.full_name || student.username} {student.first_name || ''}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(project.stages || []).map((stage) => (
-                    <tr key={`matrix-${stage.id}`}>
-                      <td style={{ padding: '8px', borderBottom: '1px solid #eef2f8' }}>
-                        {stage.order}. {stage.title}
-                      </td>
-                      {matrixStudentsFiltered.map((student) => {
-                        const submission = getSubmissionForStudent(stage, student.id)
-                        const statusKey = submission?.status || 'none'
-                        const statusText = submission ? formatSubmissionStatus(submission.status) : 'Нет сдачи'
-                        return (
-                          <td key={`${stage.id}-${student.id}`} style={{ padding: '8px', borderBottom: '1px solid #eef2f8' }}>
-                            <span
-                              style={{
-                                display: 'inline-block',
-                                padding: '4px 8px',
-                                borderRadius: '999px',
-                                color: '#fff',
-                                backgroundColor: submissionStatusColors[statusKey] || submissionStatusColors.none,
-                                fontSize: '12px',
-                                fontWeight: 600,
-                              }}
-                            >
-                              {statusText}
-                            </span>
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {onlyWithDebts && matrixStudentsFiltered.length === 0 ? (
-                <p style={{ marginTop: '8px' }}>У всех студентов этапы приняты.</p>
-              ) : null}
+            <div className="project-completion-panel">
+              <div className="project-completion-head">
+                <div>
+                  <h3>Выполняемость проекта участниками</h3>
+                  <p className="muted-text">
+                    Общий прогресс считается по всем студентам и всем этапам.
+                  </p>
+                </div>
+                <span className={projectCompletionSummary.progress === 100 ? 'status-chip status-done' : projectCompletionSummary.submitted ? 'status-chip status-review' : 'status-chip status-in-progress'}>
+                  {projectCompletionSummary.progress}%
+                </span>
+              </div>
+
+              <div className="project-completion-progress">
+                <div className="stage-progress-track" aria-label={`Выполняемость проекта ${projectCompletionSummary.progress}%`}>
+                  <span style={{ width: `${projectCompletionSummary.progress}%` }} />
+                </div>
+              </div>
+
+              <div className="project-completion-stats">
+                <div>
+                  <span className="meta-label">Участники</span>
+                  <strong>{projectCompletionSummary.students}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">Этапы</span>
+                  <strong>{projectCompletionSummary.stages}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">Всего сдач</span>
+                  <strong>{projectCompletionSummary.cells}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">Принято</span>
+                  <strong>{projectCompletionSummary.approved}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">На проверке</span>
+                  <strong>{projectCompletionSummary.submitted}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">Доработки</span>
+                  <strong>{projectCompletionSummary.needsChanges}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">Черновики</span>
+                  <strong>{projectCompletionSummary.draft}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">Нет сдачи</span>
+                  <strong>{projectCompletionSummary.missing}</strong>
+                </div>
+              </div>
+
+              <div className="next-action-row">
+                <span>
+                  {projectCompletionSummary.nextProblemStage
+                    ? `Ближайший проблемный этап: ${projectCompletionSummary.nextProblemStage.order}. ${projectCompletionSummary.nextProblemStage.title}`
+                    : 'Все этапы по всем участникам приняты'}
+                </span>
+                {projectCompletionSummary.nextProblemStage ? (
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => navigate(`/stages/review?project=${projectId}&stage=${projectCompletionSummary.nextProblemStage.id}`)}
+                  >
+                    Перейти к проверке
+                  </button>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
-          <ul className="list">
+          <ul className="list stage-timeline">
             {project.stages?.map((stage) => {
               const stageEdit = editState[stage.id]
               const editable = false
+              const stageProgress = getStageProgress(stage)
+              const stageDeadline = getStageDeadlineMeta(stage)
 
               if (!stageEdit) {
                 return (
-                  <li key={stage.id} id={`stage-${stage.id}`} className="list-item">
+                  <li key={stage.id} id={`stage-${stage.id}`} className="stage-timeline-item">
+                    <div className="stage-timeline-marker" aria-hidden="true">
+                      <span>{stage.order}</span>
+                    </div>
                     <details className="stage-collapse">
-                      <summary>{stage.order}. {stage.title} — {formatStageStatus(stage.status)}</summary>
-                      <div style={{ marginTop: '10px' }}>
-                        <p>Срок: {stage.deadline || '-'}</p>
+                      <summary className="stage-summary">
+                        <div className="stage-summary-main">
+                          <h3>{stage.title}</h3>
+                          <div className="stage-summary-meta">
+                            <span className={stageStatusClassByValue[stage.status] || 'status-chip'}>{formatStageStatus(stage.status)}</span>
+                            <span className={`critical-banner critical-${stageDeadline.tone}`}>{stageDeadline.label}</span>
+                          </div>
+                        </div>
+                        <div className="stage-summary-action">
+                          <span>Следующее действие</span>
+                          <strong>{getNextStageAction(stage)}</strong>
+                        </div>
+                      </summary>
+                      <div className="stage-detail-body">
+                        <div className="stage-progress-row">
+                          <div>
+                            <span className="meta-label">Готовность</span>
+                            <strong>{stageProgress}%</strong>
+                          </div>
+                          <div className="stage-progress-track" aria-label={`Готовность этапа ${stageProgress}%`}>
+                            <span style={{ width: `${stageProgress}%` }} />
+                          </div>
+                        </div>
+                        <div className="stage-facts-grid">
+                          <div>
+                            <span className="meta-label">Дедлайн</span>
+                            <strong>{formatDate(stage.deadline)}</strong>
+                          </div>
+                          <div>
+                            <span className="meta-label">Последний апдейт</span>
+                            <strong>{formatDateTime(stage.updated_at)}</strong>
+                          </div>
+                          <div>
+                            <span className="meta-label">Сдач студентов</span>
+                            <strong>{stage.submissions?.length || 0}</strong>
+                          </div>
+                        </div>
                       {canManageStages ? (
                         <div className="toolbar-actions" style={{ marginBottom: '8px' }}>
                           <button
@@ -1484,7 +1628,7 @@ export function ProjectDetailPage() {
           </ul>
         </article>
 
-        <article className="panel">
+        <article className="panel anchor-target" id="project-comments">
           <h2>Комментарии</h2>
           <form className="project-form" onSubmit={onCreateComment}>
             <label>

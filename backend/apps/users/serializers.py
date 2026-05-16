@@ -1,10 +1,10 @@
-from django.contrib.auth.password_validation import validate_password
+﻿from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
 from apps.users.models import SystemSetting, User
 
 USERNAME_MIN_LEN = 3
-USERNAME_MAX_LEN = 5
+USERNAME_MAX_LEN = 30
 PASSWORD_MIN_LEN = 8
 
 
@@ -57,7 +57,7 @@ class UserManageSerializer(serializers.ModelSerializer):
     def validate_username(self, value):
         length = len((value or "").strip())
         if length < USERNAME_MIN_LEN or length > USERNAME_MAX_LEN:
-            raise serializers.ValidationError("Логин должен содержать от 3 до 5 символов.")
+            raise serializers.ValidationError("Логин должен содержать от 3 до 30 символов.")
         return value
 
     def validate_new_password(self, value):
@@ -103,7 +103,7 @@ class SelfProfileSerializer(serializers.ModelSerializer):
     def validate_username(self, value):
         length = len((value or "").strip())
         if length < USERNAME_MIN_LEN or length > USERNAME_MAX_LEN:
-            raise serializers.ValidationError("Логин должен содержать от 3 до 5 символов.")
+            raise serializers.ValidationError("Логин должен содержать от 3 до 30 символов.")
         return value
 
     def validate_new_password(self, value):

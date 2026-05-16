@@ -49,9 +49,14 @@ export function AuthProvider({ children }) {
   }
 
   const logout = async () => {
-    await apiClient.post('/auth/logout/')
-    clearAuthTokens()
-    setUser(null)
+    try {
+      await apiClient.post('/auth/logout/')
+    } finally {
+      // Даже если серверный logout не удался (например, токен уже истек),
+      // локально завершаем сессию гарантированно.
+      clearAuthTokens()
+      setUser(null)
+    }
   }
 
   const value = useMemo(

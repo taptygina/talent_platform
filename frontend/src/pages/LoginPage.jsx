@@ -20,10 +20,11 @@ export function LoginPage() {
     setIsSubmitting(true)
     setError('')
     try {
-      await login(username, password)
+      await login(username.trim(), password)
       navigate(redirectTo, { replace: true })
-    } catch {
-      setError('Неверный логин или пароль.')
+    } catch (requestError) {
+      const backendMessage = requestError?.response?.data?.detail
+      setError(typeof backendMessage === 'string' && backendMessage ? backendMessage : 'Неверный логин или пароль.')
     } finally {
       setIsSubmitting(false)
     }

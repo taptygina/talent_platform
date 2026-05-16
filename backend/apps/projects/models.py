@@ -149,6 +149,7 @@ class ProjectTemplate(models.Model):
     description = models.TextField(blank=True)
     template_file = models.FileField(upload_to="project_templates/", null=True, blank=True)
     format_profile = models.JSONField(default=dict, blank=True)
+    builder_schema = models.JSONField(default=dict, blank=True)
     is_active = models.BooleanField(default=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

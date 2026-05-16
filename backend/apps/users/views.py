@@ -1,50 +1,39 @@
-from django.conf import settings
+﻿from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core.files.storage import default_storage
-from django.core.mail import send_mail
 from django.http import HttpResponse
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 import logging
-import threading
 from rest_framework import permissions, status, viewsets
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from apps.file_security import FileValidationError, UploadPolicy, sanitize_filename, validate_uploaded_file
 from apps.users.models import SystemSetting, UserRole
 from apps.users.serializers import SelfProfileSerializer, SystemSettingSerializer, UserManageSerializer, UserSerializer
 from apps.users.services import build_credentials_pdf, build_import_template_xlsx, import_users_from_xlsx
+from apps.users.tasks import send_password_reset_email_task
 
 USERNAME_MIN_LEN = 3
-USERNAME_MAX_LEN = 5
+USERNAME_MAX_LEN = 30
 PASSWORD_MIN_LEN = 8
+MAX_IMPORT_XLSX_SIZE = 3 * 1024 * 1024
+MAX_AVATAR_SIZE = 5 * 1024 * 1024
 logger = logging.getLogger(__name__)
 
 
 def _send_password_reset_email_async(*, recipient_email: str, reset_link: str) -> None:
-    def worker():
-        body = (
-            "Здравствуйте!\n\n"
-            "Вы запросили восстановление пароля на платформе \"Инженерия проектов\".\n"
-            f"Перейдите по ссылке, чтобы задать новый пароль:\n{reset_link}\n\n"
-            "Если вы не запрашивали восстановление, просто проигнорируйте это письмо."
-        )
-        try:
-            send_mail(
-                subject="Восстановление пароля",
-                message=body,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[recipient_email],
-                fail_silently=False,
-            )
-        except Exception:
-            logger.exception("Failed to send password reset email to %s", recipient_email)
-
-    threading.Thread(target=worker, daemon=True).start()
+    try:
+        send_password_reset_email_task.delay(recipient_email=recipient_email, reset_link=reset_link)
+    except Exception:
+        # Без брокера не роняем пользовательский запрос: отправляем письмо синхронно.
+        logger.exception("Celery unavailable for password reset email; fallback to sync send")
+        send_password_reset_email_task(recipient_email=recipient_email, reset_link=reset_link)
 
 
 def _set_auth_cookies(response: Response, refresh: RefreshToken) -> None:
@@ -79,8 +68,8 @@ class LoginView(APIView):
     def post(self, request):
         username = (request.data.get("username") or "").strip()
         password = request.data.get("password") or ""
-        if len(username) < USERNAME_MIN_LEN:
-            return Response({"detail": "Логин должен содержать минимум 3 символа."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(username) < USERNAME_MIN_LEN or len(username) > USERNAME_MAX_LEN:
+            return Response({"detail": "Логин должен содержать от 3 до 30 символов."}, status=status.HTTP_400_BAD_REQUEST)
         if len(password) < PASSWORD_MIN_LEN:
             return Response({"detail": "Пароль должен содержать минимум 8 символов."}, status=status.HTTP_400_BAD_REQUEST)
         user = authenticate(request, username=username, password=password)
@@ -109,10 +98,12 @@ class RefreshView(APIView):
         if not token:
             return Response({"detail": "Требуется refresh-токен."}, status=status.HTTP_401_UNAUTHORIZED)
         try:
-            refresh = RefreshToken(token)
-            user_id = refresh.get("user_id")
+            old_refresh = RefreshToken(token)
+            user_id = old_refresh.get("user_id")
             user = get_user_model().objects.get(id=user_id)
             new_refresh = RefreshToken.for_user(user)
+            # Инвалидируем старый refresh после успешной выдачи нового.
+            old_refresh.blacklist()
         except Exception:
             return Response({"detail": "Некорректный refresh-токен."}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -130,6 +121,12 @@ class RefreshView(APIView):
 
 class LogoutView(APIView):
     def post(self, request):
+        token = request.COOKIES.get("refresh_token") or request.data.get("refresh")
+        if token:
+            try:
+                RefreshToken(token).blacklist()
+            except Exception:
+                logger.warning("Could not blacklist refresh token during logout")
         response = Response(status=status.HTTP_204_NO_CONTENT)
         response.delete_cookie("access_token")
         response.delete_cookie("refresh_token")
@@ -253,8 +250,17 @@ class ImportUsersView(APIView):
         upload = request.FILES.get("file")
         if upload is None:
             return Response({"detail": "Требуется файл."}, status=status.HTTP_400_BAD_REQUEST)
-        if not upload.name.lower().endswith(".xlsx"):
-            return Response({"detail": "Поддерживаются только .xlsx файлы."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            validate_uploaded_file(
+                upload,
+                policy=UploadPolicy(
+                    allowed_extensions={".xlsx"},
+                    max_size_bytes=MAX_IMPORT_XLSX_SIZE,
+                    allow_office=True,
+                ),
+            )
+        except FileValidationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             result = import_users_from_xlsx(upload.read(), role)
@@ -316,11 +322,20 @@ class UploadAvatarView(APIView):
         if not uploaded:
             return Response({"detail": "Требуется файл."}, status=status.HTTP_400_BAD_REQUEST)
 
-        allowed_types = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-        if uploaded.content_type not in allowed_types:
-            return Response({"detail": "Разрешены только изображения."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            validate_uploaded_file(
+                uploaded,
+                policy=UploadPolicy(
+                    allowed_extensions={".jpg", ".jpeg", ".png", ".webp", ".gif"},
+                    max_size_bytes=MAX_AVATAR_SIZE,
+                    allow_images=True,
+                ),
+            )
+        except FileValidationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        saved_path = default_storage.save(f"user_avatars/{uploaded.name}", uploaded).replace("\\", "/")
+        safe_name = sanitize_filename(uploaded.name, default_stem="avatar")
+        saved_path = default_storage.save(f"user_avatars/{safe_name}", uploaded).replace("\\", "/")
         media_url = f"{settings.MEDIA_URL}{saved_path}"
         absolute_url = request.build_absolute_uri(media_url)
 

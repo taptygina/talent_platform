@@ -13,6 +13,7 @@ import { ProfilePage } from './pages/ProfilePage'
 import { PublishedProjectsFeedPage } from './pages/PublishedProjectsFeedPage'
 import { ProjectCreatePage } from './pages/ProjectCreatePage'
 import { ProjectDetailPage } from './pages/ProjectDetailPage'
+import { ProjectReviewPage } from './pages/ProjectReviewPage'
 import { StageManagePage } from './pages/StageManagePage'
 import { ProjectTemplatesPage } from './pages/ProjectTemplatesPage'
 import { ProjectsPage } from './pages/ProjectsPage'
@@ -20,6 +21,7 @@ import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { SupervisorInvitesPage } from './pages/SupervisorInvitesPage'
 import { TeamsPage } from './pages/TeamsPage'
 import { TeacherDeadlinesPage } from './pages/TeacherDeadlinesPage'
+import { TeacherWorkloadPage } from './pages/TeacherWorkloadPage'
 import { StageReviewPage } from './pages/StageReviewPage'
 import { UsersManagePage } from './pages/UsersManagePage'
 import { UserImportPage } from './pages/UserImportPage'
@@ -45,6 +47,7 @@ function App() {
         <Route path="users/manage" element={<UsersManagePage />} />
         <Route path="feed" element={<PublishedProjectsFeedPage />} />
         <Route path="projects/new" element={<ProjectCreatePage />} />
+        <Route path="projects/review" element={<ProjectReviewPage />} />
         <Route path="projects/templates" element={<ProjectTemplatesPage />} />
         <Route path="projects/:projectId/stages/manage" element={<StageManagePage />} />
         <Route path="projects/:projectId" element={<ProjectDetailPage />} />
@@ -53,6 +56,7 @@ function App() {
         <Route path="stages/review" element={<StageReviewPage />} />
         <Route path="portfolio" element={<PortfolioPage />} />
         <Route path="methodist/reports" element={<MethodistReportsPage />} />
+        <Route path="analytics/teacher-workload" element={<TeacherWorkloadPage />} />
         <Route path="users/import" element={<UserImportPage />} />
         <Route path="notifications" element={<NotificationsPage />} />
         <Route path="profile" element={<ProfilePage />} />

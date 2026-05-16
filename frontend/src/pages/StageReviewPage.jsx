@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import { API_BASE_URL, apiClient } from '../api/client'
 import { useAuth } from '../features/auth/AuthContext'
@@ -25,11 +26,13 @@ const submissionStatusLabel = {
 
 export function StageReviewPage() {
   const { user } = useAuth()
+  const [searchParams] = useSearchParams()
   const canReview = ['curator', 'admin', 'teacher'].includes(user?.role)
+  const initialProjectId = searchParams.get('project') || ''
 
   const [projects, setProjects] = useState([])
   const [project, setProject] = useState(null)
-  const [projectId, setProjectId] = useState('')
+  const [projectId, setProjectId] = useState(initialProjectId)
   const [stageId, setStageId] = useState('')
   const [studentId, setStudentId] = useState('')
   const [decision, setDecision] = useState('needs_changes')

@@ -2,6 +2,7 @@
 
 import { apiClient } from '../api/client'
 import { FileDropZone } from '../components/FileDropZone'
+import { OperationProgress } from '../components/InterfaceState'
 import { useAuth } from '../features/auth/AuthContext'
 
 const roleOptions = [
@@ -145,6 +146,7 @@ export function UserImportPage() {
           />
 
           {error ? <p className="error">{error}</p> : null}
+          {isSubmitting ? <OperationProgress label="Импортируем пользователей и проверяем строки файла..." /> : null}
 
           <button disabled={isSubmitting} type="submit">
             {isSubmitting ? 'Импорт...' : 'Импортировать'}
@@ -178,6 +180,7 @@ export function UserImportPage() {
               <button type="button" onClick={onDownloadCredentialsPdf} disabled={isPdfDownloading}>
                 {isPdfDownloading ? 'Подготовка PDF...' : 'Скачать PDF с учетными данными'}
               </button>
+              {isPdfDownloading ? <OperationProgress label="Формируем PDF с учетными данными..." /> : null}
               <ul className="list">
                 {result.generated_accounts.map((account) => (
                   <li key={account.id} className="list-item">

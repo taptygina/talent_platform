@@ -1,10 +1,14 @@
 ﻿from django.db import transaction
+import re
+
 from django.utils.text import slugify
 from django.utils import timezone
 from rest_framework import serializers
 
+from apps.file_security import FileValidationError, UploadPolicy, sanitize_filename, validate_uploaded_file
 from apps.notifications.models import NotificationType
 from apps.notifications.services import create_notifications
+from apps.projects.html_sanitizer import sanitize_html
 from apps.projects.models import (
     Project,
     ProjectComment,
@@ -30,6 +34,10 @@ from apps.projects.models import (
 )
 from apps.users.models import SystemSetting, User, UserRole
 from apps.users.serializers import UserSerializer
+
+MAX_TEMPLATE_FILE_SIZE = 8 * 1024 * 1024
+MAX_STAGE_FILE_SIZE = 20 * 1024 * 1024
+SECTION_NUMBER_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\s+")
 
 
 def _max_team_members_limit() -> int:
@@ -129,6 +137,7 @@ class ProjectTemplateSectionSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             "code": {"required": False, "allow_blank": True},
         }
+        validators = []
 
     @staticmethod
     def _generate_unique_code(template: ProjectTemplate, raw_value: str) -> str:
@@ -143,13 +152,52 @@ class ProjectTemplateSectionSerializer(serializers.ModelSerializer):
             suffix += 1
         return candidate
 
+    @staticmethod
+    def _section_sort_key(section: ProjectTemplateSection, index: int):
+        title = section.title or ""
+        normalized = title.strip().casefold()
+        if normalized == "введение":
+            return (0, [], section.order, index)
+        match = SECTION_NUMBER_RE.match(title)
+        if match:
+            numbers = [int(part) for part in match.group(1).split(".")]
+            return (1, numbers, section.order, index)
+        if normalized == "заключение" or "список" in normalized:
+            return (3, [], section.order, index)
+        return (2, [], section.order, index)
+
+    @classmethod
+    def _renumber_sections(cls, template: ProjectTemplate) -> None:
+        sections = list(template.sections.order_by("order", "id"))
+        ordered = sorted(sections, key=lambda section: cls._section_sort_key(section, sections.index(section)))
+        for offset, section in enumerate(ordered, start=1):
+            if section.order != offset:
+                section.order = 100000 + offset
+                section.save(update_fields=["order"])
+        for offset, section in enumerate(ordered, start=1):
+            if section.order != offset:
+                section.order = offset
+                section.save(update_fields=["order"])
+
     def create(self, validated_data):
         template = validated_data["template"]
         raw_code = (validated_data.get("code") or "").strip()
         if not raw_code:
             raw_code = validated_data.get("title", "")
         validated_data["code"] = self._generate_unique_code(template, raw_code)
-        return super().create(validated_data)
+        section = super().create(validated_data)
+        self._renumber_sections(template)
+        section.refresh_from_db()
+        return section
+
+    def update(self, instance, validated_data):
+        section = super().update(instance, validated_data)
+        self._renumber_sections(section.template)
+        section.refresh_from_db()
+        return section
+
+    def validate_default_task(self, value):
+        return sanitize_html(value or "")
 
 
 class ProjectTemplateSerializer(serializers.ModelSerializer):
@@ -164,6 +212,7 @@ class ProjectTemplateSerializer(serializers.ModelSerializer):
             "description",
             "template_file",
             "format_profile",
+            "builder_schema",
             "is_active",
             "created_by",
             "sections",
@@ -172,11 +221,29 @@ class ProjectTemplateSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_by", "created_at", "format_profile")
 
     def validate(self, attrs):
-        if self.instance is None and not attrs.get("template_file"):
-            raise serializers.ValidationError({
-                "template_file": "РќРµР»СЊР·СЏ СЃРѕР·РґР°С‚СЊ РїСѓСЃС‚РѕР№ С€Р°Р±Р»РѕРЅ. Р—Р°РіСЂСѓР·РёС‚Рµ .docx С„Р°Р№Р» С€Р°Р±Р»РѕРЅР°.",
-            })
         return attrs
+
+    def validate_template_file(self, uploaded):
+        if not uploaded:
+            return uploaded
+        try:
+            validate_uploaded_file(
+                uploaded,
+                policy=UploadPolicy(
+                    allowed_extensions={".docx"},
+                    max_size_bytes=MAX_TEMPLATE_FILE_SIZE,
+                    allow_office=True,
+                ),
+            )
+        except FileValidationError as exc:
+            raise serializers.ValidationError(str(exc))
+        uploaded.name = sanitize_filename(uploaded.name, default_stem="project-template")
+        return uploaded
+
+    def validate_builder_schema(self, value):
+        from apps.projects.template_utils import normalize_builder_schema
+
+        return normalize_builder_schema(value)
 
 
 class ProjectListSerializer(serializers.ModelSerializer):
@@ -237,6 +304,24 @@ class StageDeadlineChangeLogSerializer(serializers.ModelSerializer):
 
 
 class StageMaterialSerializer(serializers.ModelSerializer):
+    def validate_file(self, uploaded):
+        try:
+            validate_uploaded_file(
+                uploaded,
+                policy=UploadPolicy(
+                    allowed_extensions={".pdf", ".docx", ".xlsx", ".pptx", ".zip", ".txt", ".md", ".csv", ".json"},
+                    max_size_bytes=MAX_STAGE_FILE_SIZE,
+                    allow_office=True,
+                    allow_pdf=True,
+                    allow_text=True,
+                    allow_zip=True,
+                ),
+            )
+        except FileValidationError as exc:
+            raise serializers.ValidationError(str(exc))
+        uploaded.name = sanitize_filename(uploaded.name, default_stem="stage-material")
+        return uploaded
+
     class Meta:
         model = StageMaterial
         fields = ("id", "stage", "file", "uploaded_by", "description", "created_at")
@@ -244,6 +329,24 @@ class StageMaterialSerializer(serializers.ModelSerializer):
 
 
 class ProjectStageSubmissionFileSerializer(serializers.ModelSerializer):
+    def validate_file(self, uploaded):
+        try:
+            validate_uploaded_file(
+                uploaded,
+                policy=UploadPolicy(
+                    allowed_extensions={".pdf", ".docx", ".xlsx", ".pptx", ".zip", ".txt", ".md", ".csv", ".json"},
+                    max_size_bytes=MAX_STAGE_FILE_SIZE,
+                    allow_office=True,
+                    allow_pdf=True,
+                    allow_text=True,
+                    allow_zip=True,
+                ),
+            )
+        except FileValidationError as exc:
+            raise serializers.ValidationError(str(exc))
+        uploaded.name = sanitize_filename(uploaded.name, default_stem="stage-submission")
+        return uploaded
+
     class Meta:
         model = ProjectStageSubmissionFile
         fields = ("id", "submission", "file", "uploaded_at")
@@ -290,7 +393,10 @@ class ProjectStageSubmissionSerializer(serializers.ModelSerializer):
 
         if self.instance is None and stage and student:
             if ProjectStageSubmission.objects.filter(stage=stage, student=student).exists():
-                raise serializers.ValidationError({"detail": "РЎРґР°С‡Р° РїРѕ СЌС‚РѕРјСѓ СЌС‚Р°РїСѓ СѓР¶Рµ СЃРѕР·РґР°РЅР°."})
+                raise serializers.ValidationError({"detail": "Сдача по этому этапу уже создана."})
+
+        if "submission_text" in attrs:
+            attrs["submission_text"] = sanitize_html(attrs.get("submission_text") or "")
 
         return attrs
 
@@ -304,6 +410,9 @@ class ProjectStageReviewSerializer(serializers.ModelSerializer):
         model = ProjectStageReview
         fields = ("id", "submission", "teacher", "teacher_name", "decision", "score", "comment", "created_at")
         read_only_fields = ("teacher", "created_at")
+
+    def validate_comment(self, value):
+        return sanitize_html(value or "")
 
 
 class ProjectStageSerializer(serializers.ModelSerializer):
@@ -336,7 +445,23 @@ class ProjectStageSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("updated_by", "updated_at")
 
+    def create(self, validated_data):
+        if "task_text" in validated_data:
+            validated_data["task_text"] = sanitize_html(validated_data.get("task_text") or "")
+        if "student_report" in validated_data:
+            validated_data["student_report"] = sanitize_html(validated_data.get("student_report") or "")
+        if "teacher_feedback" in validated_data:
+            validated_data["teacher_feedback"] = sanitize_html(validated_data.get("teacher_feedback") or "")
+        return super().create(validated_data)
+
     def update(self, instance, validated_data):
+        if "task_text" in validated_data:
+            validated_data["task_text"] = sanitize_html(validated_data.get("task_text") or "")
+        if "student_report" in validated_data:
+            validated_data["student_report"] = sanitize_html(validated_data.get("student_report") or "")
+        if "teacher_feedback" in validated_data:
+            validated_data["teacher_feedback"] = sanitize_html(validated_data.get("teacher_feedback") or "")
+
         reason = (validated_data.pop("deadline_change_reason", "") or "").strip()
         old_deadline = instance.deadline
         new_deadline = validated_data.get("deadline", instance.deadline)
@@ -457,9 +582,9 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
         new_members = attrs.get("new_team_member_ids", [])
         if has_new_team:
             if not attrs.get("new_team_name"):
-                raise serializers.ValidationError("Р”Р»СЏ СЃРѕР·РґР°РЅРёСЏ РєРѕРјР°РЅРґС‹ СѓРєР°Р¶РёС‚Рµ new_team_name.")
+                raise serializers.ValidationError("Для создания команды укажите new_team_name.")
             if not new_members:
-                raise serializers.ValidationError("Р”Р»СЏ СЃРѕР·РґР°РЅРёСЏ РєРѕРјР°РЅРґС‹ СѓРєР°Р¶РёС‚Рµ new_team_member_ids.")
+                raise serializers.ValidationError("Для создания команды укажите new_team_member_ids.")
             max_members = _max_team_members_limit()
             if len(new_members) > max_members:
                 raise serializers.ValidationError(f"В новой команде может быть не более {max_members} участников.")
@@ -468,7 +593,7 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
             group_name = attrs["group_name"]
             group_students = User.objects.filter(role=UserRole.STUDENT, group_name=group_name)
             if not group_students.exists():
-                raise serializers.ValidationError(f"Р’ РіСЂСѓРїРїРµ '{group_name}' РЅРµС‚ СЃС‚СѓРґРµРЅС‚РѕРІ.")
+                raise serializers.ValidationError(f"В группе '{group_name}' нет студентов.")
             selected_group_students = attrs.get("group_student_ids", [])
             if selected_group_students:
                 invalid = [
@@ -477,7 +602,7 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
                     if student.role != UserRole.STUDENT or student.group_name != group_name
                 ]
                 if invalid:
-                    raise serializers.ValidationError(f"РЎС‚СѓРґРµРЅС‚С‹ {invalid} РЅРµ РѕС‚РЅРѕСЃСЏС‚СЃСЏ Рє РіСЂСѓРїРїРµ '{group_name}'.")
+                    raise serializers.ValidationError(f"Студенты {invalid} не относятся к группе '{group_name}'.")
 
         return attrs
 
@@ -633,6 +758,8 @@ class ProjectCommentSerializer(serializers.ModelSerializer):
         stage = attrs.get("stage") if "stage" in attrs else getattr(self.instance, "stage", None)
         if stage is not None and project is not None and stage.project_id != project.id:
             raise serializers.ValidationError("Этап комментария должен принадлежать выбранному проекту.")
+        if "text" in attrs:
+            attrs["text"] = sanitize_html(attrs.get("text") or "")
         return attrs
 
 

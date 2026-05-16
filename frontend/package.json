@@ -11,6 +11,13 @@
     "check:text": "node scripts/check-text.mjs"
   },
   "dependencies": {
+    "@tiptap/extension-image": "^3.22.5",
+    "@tiptap/extension-link": "^3.22.5",
+    "@tiptap/extension-placeholder": "^3.22.5",
+    "@tiptap/extension-text-align": "^3.22.5",
+    "@tiptap/extension-underline": "^3.22.5",
+    "@tiptap/react": "^3.22.5",
+    "@tiptap/starter-kit": "^3.22.5",
     "axios": "^1.11.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
